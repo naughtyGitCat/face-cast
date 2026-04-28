@@ -15,15 +15,14 @@ function Find-NSSM {
     $cmd = (Get-Command nssm -ErrorAction SilentlyContinue).Source
     if ($cmd) { return $cmd }
     $candidates = @(
+        (Join-Path $InstallDir "bin\nssm.exe"),
         "$env:LOCALAPPDATA\Microsoft\WinGet\Links\nssm.exe",
         "C:\ProgramData\chocolatey\bin\nssm.exe"
     )
-    # winget 包目录
     $pkg = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Directory -Filter "NSSM.NSSM_*" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($pkg) {
-        $candidates += @(
-            (Get-ChildItem $pkg.FullName -Recurse -Filter "nssm.exe" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*win64*" } | Select-Object -First 1 -ExpandProperty FullName)
-        )
+        $candidates += (Get-ChildItem $pkg.FullName -Recurse -Filter "nssm.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*win64*" } | Select-Object -First 1 -ExpandProperty FullName)
     }
     foreach ($c in $candidates) {
         if ($c -and (Test-Path $c)) { return $c }
@@ -31,14 +30,30 @@ function Find-NSSM {
     return $null
 }
 
+function Install-NSSM-Direct {
+    # 直接从 nssm.cc 下 zip, 解压 win64 nssm.exe 到 InstallDir\bin
+    $binDir = Join-Path $InstallDir "bin"
+    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+    $zip = Join-Path $env:TEMP "nssm.zip"
+    $extracted = Join-Path $env:TEMP "nssm-extracted"
+    Write-Host "  下 nssm zip ..."
+    Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile $zip -UseBasicParsing
+    if (Test-Path $extracted) { Remove-Item -Recurse -Force $extracted }
+    Expand-Archive -Path $zip -DestinationPath $extracted -Force
+    $exe = Get-ChildItem $extracted -Recurse -Filter "nssm.exe" | Where-Object { $_.FullName -like "*win64*" } | Select-Object -First 1
+    if (-not $exe) { throw "nssm.exe (win64) 没找到" }
+    Copy-Item $exe.FullName -Destination (Join-Path $binDir "nssm.exe") -Force
+    Remove-Item -Recurse -Force $extracted
+    Remove-Item -Force $zip
+    return (Join-Path $binDir "nssm.exe")
+}
+
 $nssm = Find-NSSM
 if (-not $nssm) {
-    Write-Host "装 NSSM ..." -ForegroundColor Yellow
-    winget install --id NSSM.NSSM -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
-    Start-Sleep -Seconds 2
-    $nssm = Find-NSSM
+    Write-Host "装 NSSM (直接下 zip) ..." -ForegroundColor Yellow
+    $nssm = Install-NSSM-Direct
 }
-if (-not $nssm) { throw "nssm not found after install" }
+if (-not $nssm) { throw "nssm not found" }
 Write-Host "nssm: $nssm"
 
 $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source
