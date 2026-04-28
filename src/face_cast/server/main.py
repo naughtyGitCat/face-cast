@@ -80,6 +80,13 @@ def _faces_to_dict(faces) -> list[dict]:
     """InsightFace Face objects → JSON-friendly dicts."""
     out = []
     for f in faces:
+        # 性别归一化: InsightFace 0.7.3 返回 'F'/'M' 字符 (.sex), 不是 int
+        # 也有些版本提供 .gender (int 0=female, 1=male). 都尝试.
+        sex_val: int | None = None
+        if hasattr(f, "gender") and f.gender is not None:
+            sex_val = int(f.gender)
+        elif hasattr(f, "sex") and f.sex is not None:
+            sex_val = {"F": 0, "f": 0, "M": 1, "m": 1}.get(str(f.sex), None)
         out.append(
             {
                 "bbox": f.bbox.astype(int).tolist(),       # [x1, y1, x2, y2]
@@ -87,7 +94,7 @@ def _faces_to_dict(faces) -> list[dict]:
                 "embedding": f.embedding.astype(float).tolist(),  # 512 float
                 "det_score": float(f.det_score),
                 "age": int(f.age) if f.age is not None else None,
-                "sex": int(f.sex) if hasattr(f, "sex") and f.sex is not None else None,
+                "sex": sex_val,
             }
         )
     return out
