@@ -3,10 +3,10 @@
 #
 # 假设:
 #   - NVIDIA 驱动已装 (跑 2080 Ti / 3090 / 4060+ 都行)
-#   - F:\face-server 作为安装目录 (可改 $InstallDir)
+#   - E:\face-cast 作为安装目录 (可改 $InstallDir)
 
 param(
-    [string]$InstallDir = "F:\face-server",
+    [string]$InstallDir = "E:\face-cast",
     [string]$RepoUrl = "https://github.com/naughtyGitCat/face-cast",
     [string]$Branch = "main",
     [int]$Port = 9000
