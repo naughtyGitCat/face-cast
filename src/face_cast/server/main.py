@@ -23,6 +23,31 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
+
+
+def _register_nvidia_dlls() -> None:
+    """让 onnxruntime-gpu 找到 nvidia-cudnn-cu12 / nvidia-cublas-cu12 等 pip 包里
+    带的 DLL — Windows 不会自动搜 site-packages 的 nvidia/*/bin/.
+
+    必须在 import insightface / onnxruntime 之前调用. (insightface 是 lifespan
+    内延迟导入的, 但放这里更保险)
+    """
+    if sys.platform != "win32":
+        return
+    nvidia_root = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
+    if not nvidia_root.is_dir():
+        return
+    for sub in nvidia_root.iterdir():
+        bin_dir = sub / "bin"
+        if bin_dir.is_dir():
+            try:
+                os.add_dll_directory(str(bin_dir))
+            except (OSError, FileNotFoundError):
+                pass
+
+
+_register_nvidia_dlls()
 
 import bottle
 import cv2
