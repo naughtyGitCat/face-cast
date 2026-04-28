@@ -1,0 +1,32 @@
+{% extends "_base.html" %}
+{% block topbar %}
+  <a href="/folders" class="meta">← 全部目录</a>
+{% endblock %}
+{% block main %}
+<h1>{{ folder }}</h1>
+<p class="hint">{{ videos|length }} 个视频. 点 person 跳详情.</p>
+
+<table class="folder-tbl">
+<thead><tr>
+  <th>视频</th>
+  <th>face 数</th>
+  <th>识别到的 person</th>
+</tr></thead>
+<tbody>
+{% for v in videos %}
+<tr>
+  <td>{{ v.video_name }}</td>
+  <td class="num">{{ v.face_count }}</td>
+  <td class="person-list">
+    {% for p in v.persons %}
+      <a href="/person/{{ p.person_idx }}" class="pill {% if p.display_name %}named{% endif %}">
+        {{ p.display_name or "p_" ~ p.person_idx }}
+      </a>
+    {% endfor %}
+    {% if not v.persons %}<span class="muted">无</span>{% endif %}
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

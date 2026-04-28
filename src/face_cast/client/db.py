@@ -416,6 +416,154 @@ def face_crop(conn: sqlite3.Connection, face_id: int) -> bytes | None:
     return row["crop_jpeg"] if row else None
 
 
+def folder_summary(conn: sqlite3.Connection, run_id: int) -> list[dict]:
+    """每个父目录: 视频数 + 出现的 person 数 + 总 face 数."""
+    folders: dict[str, dict] = {}
+    for r in conn.execute("SELECT DISTINCT video_path FROM frames"):
+        p = r["video_path"]
+        sep = "\\" if "\\" in p else "/"
+        idx = p.rfind(sep)
+        folder = p[:idx] if idx >= 0 else p
+        folders.setdefault(folder, {"folder": folder, "videos": 0, "faces": 0, "person_idx_set": set()})
+        folders[folder]["videos"] += 1
+    if not folders:
+        return []
+    counts_rows = conn.execute(
+        """
+        SELECT
+            f.video_path,
+            COUNT(fa.id) AS faces_in_video,
+            GROUP_CONCAT(DISTINCT p.person_idx) AS person_idxs
+        FROM frames f
+        LEFT JOIN faces fa ON fa.frame_id = f.id
+        LEFT JOIN face_samples fs ON fs.face_id = fa.id
+        LEFT JOIN persons p ON p.id = fs.person_id AND p.run_id = ?
+        GROUP BY f.video_path
+        """,
+        (run_id,),
+    ).fetchall()
+    for r in counts_rows:
+        p = r["video_path"]
+        sep = "\\" if "\\" in p else "/"
+        idx = p.rfind(sep)
+        folder = p[:idx] if idx >= 0 else p
+        if folder not in folders:
+            continue
+        folders[folder]["faces"] += r["faces_in_video"] or 0
+        if r["person_idxs"]:
+            for x in r["person_idxs"].split(","):
+                if x.isdigit() or (x.startswith("-") and x[1:].isdigit()):
+                    folders[folder]["person_idx_set"].add(int(x))
+
+    out = []
+    for folder, info in folders.items():
+        out.append({
+            "folder": folder,
+            "videos": info["videos"],
+            "faces": info["faces"],
+            "persons": sorted([i for i in info["person_idx_set"] if i >= 0]),
+            "person_count": len([i for i in info["person_idx_set"] if i >= 0]),
+        })
+    out.sort(key=lambda x: x["videos"], reverse=True)
+    return out
+
+
+def folder_videos(
+    conn: sqlite3.Connection, run_id: int, folder: str,
+) -> list[dict]:
+    """某目录下的所有视频 + 各自的 person 出场表."""
+    rows = conn.execute(
+        """
+        SELECT
+            f.video_path,
+            COUNT(fa.id) AS face_count,
+            GROUP_CONCAT(DISTINCT p.person_idx || ':' || COALESCE(p.display_name, '')) AS person_data
+        FROM frames f
+        LEFT JOIN faces fa ON fa.frame_id = f.id
+        LEFT JOIN face_samples fs ON fs.face_id = fa.id
+        LEFT JOIN persons p ON p.id = fs.person_id AND p.run_id = ? AND p.person_idx >= 0
+        WHERE f.video_path LIKE ?
+        GROUP BY f.video_path
+        ORDER BY f.video_path
+        """,
+        (run_id, folder + "%"),
+    ).fetchall()
+    out = []
+    for r in rows:
+        p = r["video_path"]
+        # 仅同一 folder, 不混入 sibling parents 的子目录
+        sep = "\\" if "\\" in p else "/"
+        idx = p.rfind(sep)
+        if idx < 0 or p[:idx] != folder:
+            continue
+        persons = []
+        if r["person_data"]:
+            for entry in r["person_data"].split(","):
+                if not entry or entry == "None":
+                    continue
+                p_idx_str, _, name = entry.partition(":")
+                try:
+                    persons.append({"person_idx": int(p_idx_str), "display_name": name or None})
+                except ValueError:
+                    pass
+        out.append({
+            "video_path": p,
+            "video_name": p[idx + 1:],
+            "face_count": r["face_count"] or 0,
+            "persons": persons,
+        })
+    return out
+
+
+def candidate_pairs(
+    conn: sqlite3.Connection, run_id: int, min_similarity: float = 0.45,
+    limit: int = 100,
+) -> list[dict]:
+    """全库找相似度 ≥ threshold 的 person 对 (a.person_idx < b.person_idx 去重).
+
+    O(N²) 内存计算; N 一般 < 1000, 没问题.
+    """
+    rows = conn.execute(
+        """
+        SELECT id, person_idx, display_name, size, centroid_blob
+        FROM persons
+        WHERE run_id = ? AND person_idx >= 0 AND centroid_blob IS NOT NULL
+        ORDER BY size DESC
+        """,
+        (run_id,),
+    ).fetchall()
+    if len(rows) < 2:
+        return []
+    # 全部 normalize 到单位向量
+    n = len(rows)
+    dim = len(rows[0]["centroid_blob"]) // 4  # float32 = 4 bytes
+    M = np.zeros((n, dim), dtype=np.float32)
+    for i, r in enumerate(rows):
+        v = np.frombuffer(r["centroid_blob"], dtype=np.float32)
+        norm = np.linalg.norm(v)
+        if norm > 0:
+            M[i] = v / norm
+    sim_matrix = M @ M.T  # n × n cosine similarity
+    pairs = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            s = float(sim_matrix[i, j])
+            if s >= min_similarity:
+                pairs.append({
+                    "a_idx": rows[i]["person_idx"],
+                    "a_name": rows[i]["display_name"],
+                    "a_size": rows[i]["size"],
+                    "a_id": rows[i]["id"],
+                    "b_idx": rows[j]["person_idx"],
+                    "b_name": rows[j]["display_name"],
+                    "b_size": rows[j]["size"],
+                    "b_id": rows[j]["id"],
+                    "similarity": s,
+                })
+    pairs.sort(key=lambda x: x["similarity"], reverse=True)
+    return pairs[:limit]
+
+
 def eject_face(conn: sqlite3.Connection, face_id: int, person_db_id_: int) -> int:
     """把单张脸踢出当前 person (变噪声). 返回受影响的 face_samples 行数."""
     cur = conn.execute(

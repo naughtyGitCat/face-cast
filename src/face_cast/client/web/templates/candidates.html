@@ -1,0 +1,52 @@
+{% extends "_base.html" %}
+{% block topbar %}
+  <span class="meta">{{ pairs|length }} 对候选 · 阈值 sim ≥ {{ "%.2f"|format(min_sim) }} · run #{{ run_id }}</span>
+{% endblock %}
+{% block main %}
+<h1>合并候选 (相似度高的 person 对)</h1>
+<p class="hint">centroid 余弦相似度 ≥ {{ "%.2f"|format(min_sim) }}. 一眼看是同一人就点 [合并] 选边并入. 不像就忽略.</p>
+
+<form method="get" class="threshold-form inline">
+  阈值:
+  <input type="number" name="min" step="0.05" min="0" max="1" value="{{ min_sim }}">
+  <button>重新筛选</button>
+</form>
+
+<div class="candidates">
+{% for p in pairs %}
+<div class="cand-row">
+  <a class="card sim" href="/person/{{ p.a_idx }}">
+    {% if p.a_thumb %}<img loading="lazy" src="/face/{{ p.a_thumb }}.jpg">{% endif %}
+    <div class="caption">
+      <div class="name {% if p.a_name %}named{% endif %}">{{ p.a_name or "p_" ~ p.a_idx }}</div>
+      <div class="size">{{ p.a_size }} 帧</div>
+    </div>
+  </a>
+
+  <div class="cand-mid">
+    <div class="sim-score">sim<br><b>{{ "%.2f"|format(p.similarity) }}</b></div>
+    <form hx-post="/person/{{ p.a_idx }}/merge"
+          hx-confirm="把 p_{{ p.b_idx }} ({{ p.b_size }}) 合并到 p_{{ p.a_idx }} ({{ p.a_size }})?">
+      <input type="hidden" name="source_idx" value="{{ p.b_idx }}">
+      <button class="merge-btn">← 合到左</button>
+    </form>
+    <form hx-post="/person/{{ p.b_idx }}/merge"
+          hx-confirm="把 p_{{ p.a_idx }} ({{ p.a_size }}) 合并到 p_{{ p.b_idx }} ({{ p.b_size }})?">
+      <input type="hidden" name="source_idx" value="{{ p.a_idx }}">
+      <button class="merge-btn">合到右 →</button>
+    </form>
+  </div>
+
+  <a class="card sim" href="/person/{{ p.b_idx }}">
+    {% if p.b_thumb %}<img loading="lazy" src="/face/{{ p.b_thumb }}.jpg">{% endif %}
+    <div class="caption">
+      <div class="name {% if p.b_name %}named{% endif %}">{{ p.b_name or "p_" ~ p.b_idx }}</div>
+      <div class="size">{{ p.b_size }} 帧</div>
+    </div>
+  </a>
+</div>
+{% else %}
+<p class="hint">没有相似度达到阈值的 person 对. 试试降低阈值.</p>
+{% endfor %}
+</div>
+{% endblock %}

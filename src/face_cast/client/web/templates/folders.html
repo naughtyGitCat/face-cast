@@ -1,0 +1,34 @@
+{% extends "_base.html" %}
+{% block topbar %}
+  <span class="meta">{{ folders|length }} 个目录 · run #{{ run_id }}</span>
+{% endblock %}
+{% block main %}
+<h1>媒体目录</h1>
+<p class="hint">按目录分组. 点目录看其中视频和涉及的 person.</p>
+
+<table class="folder-tbl">
+<thead><tr>
+  <th>目录</th>
+  <th>视频数</th>
+  <th>face 数</th>
+  <th>person 数</th>
+  <th>person_idx 列表</th>
+</tr></thead>
+<tbody>
+{% for f in folders %}
+<tr>
+  <td><a href="/folder?path={{ f.folder | urlencode }}">{{ f.folder }}</a></td>
+  <td class="num">{{ f.videos }}</td>
+  <td class="num">{{ f.faces }}</td>
+  <td class="num">{{ f.person_count }}</td>
+  <td class="person-list">
+    {% for idx in f.persons[:8] %}
+      <a href="/person/{{ idx }}" class="pill">{{ idx }}</a>
+    {% endfor %}
+    {% if f.persons|length > 8 %}<span class="muted">+{{ f.persons|length - 8 }}</span>{% endif %}
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

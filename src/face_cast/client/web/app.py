@@ -276,6 +276,52 @@ def create_app(db_path: Path) -> Bottle:
         stats = push_named_persons(c, run_id, jf, overwrite=overwrite)
         return f"{stats}"
 
+    # ─── Folder tree ──────────────────────────────────────────────────
+
+    @app.get("/folders")
+    def folders_index():
+        c = conn()
+        run_id = active_run_id(c)
+        items = db.folder_summary(c, run_id)
+        return render("folders.html", folders=items, run_id=run_id)
+
+    @app.get("/folder")
+    def folder_detail():
+        c = conn()
+        run_id = active_run_id(c)
+        path = request.query.get("path", "")
+        if not path:
+            redirect("/folders")
+        videos = db.folder_videos(c, run_id, path)
+        return render("folder.html", folder=path, videos=videos, run_id=run_id)
+
+    # ─── 批量合并候选 ─────────────────────────────────────────────────
+
+    @app.get("/candidates")
+    def candidates():
+        c = conn()
+        run_id = active_run_id(c)
+        try:
+            min_sim = float(request.query.get("min", "0.45"))
+        except ValueError:
+            min_sim = 0.45
+        pairs = db.candidate_pairs(c, run_id, min_similarity=min_sim, limit=200)
+        # 给每个 person 找 thumb
+        thumb_cache: dict[int, int | None] = {}
+        for p in pairs:
+            for side in ("a", "b"):
+                pid = p[f"{side}_id"]
+                if pid not in thumb_cache:
+                    row = c.execute(
+                        "SELECT id FROM faces fa JOIN face_samples fs ON fs.face_id=fa.id "
+                        "WHERE fs.person_id=? AND fa.crop_jpeg IS NOT NULL "
+                        "ORDER BY fa.det_score DESC LIMIT 1",
+                        (pid,),
+                    ).fetchone()
+                    thumb_cache[pid] = row["id"] if row else None
+                p[f"{side}_thumb"] = thumb_cache[pid]
+        return render("candidates.html", pairs=pairs, min_sim=min_sim, run_id=run_id)
+
     # ─── 静态资源 ─────────────────────────────────────────────────────
 
     @app.get("/static/<filename:path>")

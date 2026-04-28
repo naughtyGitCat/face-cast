@@ -91,6 +91,67 @@ button.link {
   font-size: 11px; padding: 2px 4px;
 }
 
+/* nav */
+.navlinks { display: flex; gap: 16px; }
+.navlinks a {
+  color: #d1d5db; text-decoration: none; font-size: 14px;
+  padding: 4px 8px; border-radius: 4px;
+}
+.navlinks a:hover { color: #fff; background: rgba(255,255,255,.08); }
+
+/* folder 表格 */
+.folder-tbl {
+  width: 100%; background: #fff; border-collapse: collapse;
+  border-radius: 8px; overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+.folder-tbl th, .folder-tbl td {
+  padding: 10px 14px; text-align: left; border-bottom: 1px solid #f3f4f6;
+  font-size: 13px;
+}
+.folder-tbl th { background: #f9fafb; font-weight: 600; color: #374151; }
+.folder-tbl tr:hover td { background: #fafbfc; }
+.folder-tbl td.num { text-align: right; font-variant-numeric: tabular-nums; color: #6b7280; }
+.folder-tbl a { color: #1f2937; text-decoration: none; }
+.folder-tbl a:hover { text-decoration: underline; }
+.person-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.pill {
+  display: inline-block; padding: 1px 8px;
+  background: #e5e7eb; color: #374151;
+  border-radius: 10px; font-size: 11px; text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.pill:hover { background: #d1d5db; }
+.pill.named { background: #d1fae5; color: #047857; font-weight: 600; }
+.muted { color: #9ca3af; font-size: 12px; }
+
+/* candidates */
+.threshold-form { margin: 12px 0; }
+.threshold-form input { width: 80px; }
+.candidates { display: flex; flex-direction: column; gap: 8px; max-width: 900px; }
+.cand-row {
+  display: grid; grid-template-columns: 1fr 220px 1fr; gap: 16px;
+  align-items: center;
+  background: #fff; padding: 12px; border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+.cand-row .card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 4px; box-shadow: none;
+}
+.cand-row .card img {
+  width: 80px; height: 80px; aspect-ratio: 1/1;
+  object-fit: cover; border-radius: 4px;
+}
+.cand-row .card .caption { padding: 0; }
+.cand-row .card .name.named { color: #047857; font-weight: 600; }
+.cand-mid {
+  display: flex; flex-direction: column; gap: 6px; align-items: center;
+}
+.sim-score { font-size: 12px; text-align: center; color: #6b7280; }
+.sim-score b { font-size: 18px; color: #1f2937; }
+.cand-mid .merge-btn { width: 100px; padding: 6px; font-size: 12px; margin: 0; }
+
 /* 视频列表 */
 .video-list { list-style: none; padding: 0; font-size: 13px; }
 .video-list li { padding: 4px 0; border-bottom: 1px solid #e5e7eb; }
