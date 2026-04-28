@@ -46,21 +46,42 @@ if (-not (Test-Path $InstallDir)) {
 }
 
 # ─── 3. 创建 venv + 装依赖 (含 server extras) ────────────────────────────
-Write-Host "[3/5] uv sync (含 server extras) ..." -ForegroundColor Yellow
+Write-Host "[3/7] uv sync (含 server extras) ..." -ForegroundColor Yellow
 Push-Location $InstallDir
 & $uv sync --extra server
 Pop-Location
 
-# ─── 4. 预热模型 (首次会下载 ~280 MB buffalo_l) ──────────────────────────
-Write-Host "[4/5] 预热 buffalo_l 模型 ..." -ForegroundColor Yellow
+# ─── 4. 装 NVIDIA CUDA pip 包 (onnxruntime-gpu 需要的运行时 dll) ─────────
+Write-Host "[4/7] 装 nvidia-cudnn / cublas / cuda-runtime ..." -ForegroundColor Yellow
+Push-Location $InstallDir
+& $uv pip install nvidia-cudnn-cu12 nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cuda-nvrtc-cu12 nvidia-curand-cu12 nvidia-cufft-cu12 nvidia-cusparse-cu12 nvidia-cusolver-cu12
+Pop-Location
+
+# ─── 5. 复制 NVIDIA DLL 到 .venv\Scripts (Windows DLL 搜索从 EXE 目录开始) ─
+Write-Host "[5/7] 拷贝 NVIDIA DLL 到 venv Scripts (cudnn 子模块解析需要) ..." -ForegroundColor Yellow
+$scriptsDir = Join-Path $InstallDir ".venv\Scripts"
+$nvidiaRoot = Join-Path $InstallDir ".venv\Lib\site-packages\nvidia"
+if (Test-Path $nvidiaRoot) {
+    $count = 0
+    Get-ChildItem $nvidiaRoot -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName -Destination $scriptsDir -Force
+        $count++
+    }
+    Write-Host "  copied $count DLL files"
+} else {
+    Write-Host "  ⚠ nvidia/ 目录不存在 (跳过 DLL 复制); GPU 推理可能不可用" -ForegroundColor Red
+}
+
+# ─── 6. 预热模型 (首次会下载 ~280 MB buffalo_l) ──────────────────────────
+Write-Host "[6/7] 预热 buffalo_l 模型 ..." -ForegroundColor Yellow
 Push-Location $InstallDir
 # 用单行 python; PowerShell 解析 here-string 时会把 Python 关键字误识别
 $preheatScript = "from insightface.app import FaceAnalysis; fa = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider','CPUExecutionProvider']); fa.prepare(ctx_id=0); print('model providers:', fa.models['detection'].session.get_providers())"
 & $uv run python -c $preheatScript
 Pop-Location
 
-# ─── 5. 防火墙开端口 ─────────────────────────────────────────────────────
-Write-Host "[5/5] 防火墙规则 :$Port ..." -ForegroundColor Yellow
+# ─── 7. 防火墙开端口 ─────────────────────────────────────────────────────
+Write-Host "[7/7] 防火墙规则 :$Port ..." -ForegroundColor Yellow
 $ruleName = "face-cast :$Port"
 if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
