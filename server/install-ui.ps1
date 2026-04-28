@@ -11,13 +11,35 @@ param(
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $ErrorActionPreference = "Stop"
 
-$nssm = (Get-Command nssm -ErrorAction SilentlyContinue).Source
+function Find-NSSM {
+    $cmd = (Get-Command nssm -ErrorAction SilentlyContinue).Source
+    if ($cmd) { return $cmd }
+    $candidates = @(
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Links\nssm.exe",
+        "C:\ProgramData\chocolatey\bin\nssm.exe"
+    )
+    # winget 包目录
+    $pkg = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Directory -Filter "NSSM.NSSM_*" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($pkg) {
+        $candidates += @(
+            (Get-ChildItem $pkg.FullName -Recurse -Filter "nssm.exe" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*win64*" } | Select-Object -First 1 -ExpandProperty FullName)
+        )
+    }
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path $c)) { return $c }
+    }
+    return $null
+}
+
+$nssm = Find-NSSM
 if (-not $nssm) {
     Write-Host "装 NSSM ..." -ForegroundColor Yellow
     winget install --id NSSM.NSSM -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
-    $nssm = (Get-Command nssm -ErrorAction SilentlyContinue).Source
+    Start-Sleep -Seconds 2
+    $nssm = Find-NSSM
 }
-if (-not $nssm) { throw "nssm not found" }
+if (-not $nssm) { throw "nssm not found after install" }
+Write-Host "nssm: $nssm"
 
 $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source
 if (-not $uv) {
