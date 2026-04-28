@@ -2,7 +2,6 @@
 
 设计:
   - 一个连接走全程, 上层不直接写 SQL
-  - 用 Pydantic / dataclass 暴露行类型 (这里用 dataclass 减依赖)
   - WAL + foreign_keys ON
 """
 
@@ -10,45 +9,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 SCHEMA_PATH = Path(__file__).resolve().parents[3] / "schema.sql"
-
-
-# ─── row dataclasses ───────────────────────────────────────────────────────
-
-
-@dataclass
-class FrameRow:
-    id: int
-    video_path: str
-    frame_ms: int
-    width: int | None
-    height: int | None
-
-
-@dataclass
-class FaceRow:
-    id: int
-    frame_id: int
-    bbox: tuple[int, int, int, int]
-    det_score: float | None
-    detector: str
-    age: int | None
-    sex: int | None
-
-
-@dataclass
-class EmbeddingRow:
-    id: int
-    face_id: int
-    model_name: str
-    model_version: str
-    dim: int
-    vector: np.ndarray
 
 
 # ─── DB connection / setup ────────────────────────────────────────────────
@@ -58,7 +23,7 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     """打开 SQLite 连接, 应用 schema (idempotent)."""
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), isolation_level=None)  # autocommit, 显式 BEGIN
+    conn = sqlite3.connect(str(db_path), isolation_level=None)  # autocommit
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
@@ -96,7 +61,7 @@ def upsert_frame(
 def frame_already_processed(
     conn: sqlite3.Connection, video_path: str, frame_ms: int
 ) -> bool:
-    """该帧是否已抽过且至少有过一次推理 (有 face 行 OR 有 work_log embed ok)."""
+    """该帧是否已抽过且至少有过一次推理 (有 face 行)."""
     row = conn.execute(
         """
         SELECT 1 FROM frames f
@@ -132,12 +97,6 @@ def insert_face(
         (frame_id, *bbox, det_score, detector, age, sex, crop_jpeg),
     )
     return cur.lastrowid
-
-
-def faces_by_frame(conn: sqlite3.Connection, frame_id: int) -> list[sqlite3.Row]:
-    return list(
-        conn.execute("SELECT * FROM faces WHERE frame_id = ?", (frame_id,)).fetchall()
-    )
 
 
 # ─── embedding ────────────────────────────────────────────────────────────
@@ -196,7 +155,7 @@ def load_embeddings(
     return face_ids, matrix
 
 
-# ─── cluster_runs / clusters / face_cluster ──────────────────────────────
+# ─── detection_runs / persons / face_samples ─────────────────────────────
 
 
 def create_run(
@@ -210,7 +169,7 @@ def create_run(
 ) -> int:
     cur = conn.execute(
         """
-        INSERT INTO cluster_runs
+        INSERT INTO detection_runs
             (model_name, model_version, algo, params_json, n_embeddings, notes)
         VALUES (?,?,?,?,?,?)
         """,
@@ -223,73 +182,75 @@ def create_run(
 def finalize_run(
     conn: sqlite3.Connection,
     run_id: int,
-    n_clusters: int,
+    n_persons: int,
     n_noise: int,
     set_active: bool = True,
 ) -> None:
     if set_active:
-        conn.execute("UPDATE cluster_runs SET is_active = 0")
+        conn.execute("UPDATE detection_runs SET is_active = 0")
     conn.execute(
-        "UPDATE cluster_runs SET n_clusters = ?, n_noise = ?, is_active = ? WHERE id = ?",
-        (n_clusters, n_noise, 1 if set_active else 0, run_id),
+        "UPDATE detection_runs SET n_persons = ?, n_noise = ?, is_active = ? WHERE id = ?",
+        (n_persons, n_noise, 1 if set_active else 0, run_id),
     )
 
 
-def insert_cluster(
+def insert_person(
     conn: sqlite3.Connection,
     run_id: int,
-    cluster_idx: int,
+    person_idx: int,
     size: int,
     centroid: np.ndarray | None = None,
 ) -> int:
     blob = centroid.astype(np.float32).tobytes() if centroid is not None else None
     cur = conn.execute(
         """
-        INSERT INTO clusters (run_id, cluster_idx, size, centroid_blob)
+        INSERT INTO persons (run_id, person_idx, size, centroid_blob)
         VALUES (?,?,?,?)
         """,
-        (run_id, cluster_idx, size, blob),
+        (run_id, person_idx, size, blob),
     )
     return cur.lastrowid
 
 
-def link_face_cluster(conn: sqlite3.Connection, face_id: int, cluster_id: int) -> None:
+def link_face_sample(
+    conn: sqlite3.Connection, face_id: int, person_id: int, is_manual: bool = False
+) -> None:
     conn.execute(
-        "INSERT OR IGNORE INTO face_cluster (face_id, cluster_id) VALUES (?,?)",
-        (face_id, cluster_id),
+        "INSERT OR IGNORE INTO face_samples (face_id, person_id, is_manual) VALUES (?,?,?)",
+        (face_id, person_id, 1 if is_manual else 0),
     )
 
 
 def active_run(conn: sqlite3.Connection) -> sqlite3.Row | None:
     return conn.execute(
-        "SELECT * FROM cluster_runs WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
+        "SELECT * FROM detection_runs WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
     ).fetchone()
 
 
-# ─── 给 NFO 写入用: 查每个 video 的 actor cluster ────────────────────────
+# ─── 给 NFO 写入用: 查每个 video 的 person ────────────────────────────────
 
 
-def video_actors(
+def video_persons(
     conn: sqlite3.Connection, video_path: str, run_id: int, min_appearances: int = 2
 ) -> list[sqlite3.Row]:
-    """返回某 video 在该 run 下的主要 cluster (出场次数 >= 阈值, 排除噪声)."""
+    """返回某 video 在该 run 下的主要 person (出场次数 >= 阈值, 排除噪声 -1)."""
     return list(
         conn.execute(
             """
             SELECT
-                c.id AS cluster_id,
-                c.cluster_idx,
-                c.human_name,
-                c.size AS cluster_size,
-                COUNT(fc.face_id) AS appearances
+                p.id AS person_id,
+                p.person_idx,
+                p.display_name,
+                p.size AS person_size,
+                COUNT(fs.face_id) AS appearances
             FROM frames f
             JOIN faces fa ON fa.frame_id = f.id
-            JOIN face_cluster fc ON fc.face_id = fa.id
-            JOIN clusters c ON c.id = fc.cluster_id
+            JOIN face_samples fs ON fs.face_id = fa.id
+            JOIN persons p ON p.id = fs.person_id
             WHERE f.video_path = ?
-              AND c.run_id = ?
-              AND c.cluster_idx >= 0          -- 排除噪声 -1
-            GROUP BY c.id
+              AND p.run_id = ?
+              AND p.person_idx >= 0          -- 排除噪声 -1
+            GROUP BY p.id
             HAVING appearances >= ?
             ORDER BY appearances DESC
             """,

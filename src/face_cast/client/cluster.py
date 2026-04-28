@@ -1,4 +1,8 @@
-"""HDBSCAN 聚类 — 输入 (face_id, embedding) 矩阵, 输出 cluster 分配."""
+"""HDBSCAN 聚类算法封装 — 把 N×D embedding 矩阵分到「同一个 person」.
+
+文件名保留 cluster.py (反映底层算法是 HDBSCAN 聚类),
+但语义层面输出的是 "person 列表".
+"""
 
 from __future__ import annotations
 
@@ -8,27 +12,29 @@ import numpy as np
 
 
 @dataclass
-class ClusterResult:
-    labels: np.ndarray         # shape (N,), 每个 face 的 cluster_idx (-1=噪声)
-    n_clusters: int
+class DetectionResult:
+    """一次 person 识别的结果."""
+
+    labels: np.ndarray         # shape (N,), 每个 face 的 person_idx (-1=噪声)
+    n_persons: int
     n_noise: int
-    centroids: dict[int, np.ndarray]  # cluster_idx -> 该 cluster 的 embedding 均值
+    centroids: dict[int, np.ndarray]  # person_idx -> 该 person 的 embedding 均值
 
 
-def cluster_embeddings(
+def detect_persons(
     embeddings: np.ndarray,
     min_cluster_size: int = 3,
     min_samples: int = 2,
     metric: str = "cosine",
-) -> ClusterResult:
-    """对 N×D embedding 矩阵跑 HDBSCAN. 返回每条记录的 cluster id."""
+) -> DetectionResult:
+    """对 N×D embedding 矩阵跑 HDBSCAN. 返回每条记录的 person_idx."""
     import hdbscan  # noqa: PLC0415
 
     if embeddings.shape[0] == 0:
-        return ClusterResult(np.zeros(0, dtype=int), 0, 0, {})
+        return DetectionResult(np.zeros(0, dtype=int), 0, 0, {})
 
-    # cosine 距离需要先做 L2 normalize, 然后用 euclidean (HDBSCAN 不直接支持 cosine on cdist 上 condense_tree)
-    # 实际等价: cosine_dist(a,b) = 1 - dot(a̅, b̅), 当 a̅,b̅ 单位向量时与 0.5*||a̅-b̅||² 单调
+    # cosine 距离: 先 L2 normalize, 再用 euclidean (HDBSCAN 不直接支持 cosine)
+    # cosine_dist(a,b) = 1 - dot(â, b̂); 单位向量下与 ||â-b̂||² 单调
     if metric == "cosine":
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms[norms == 0] = 1
@@ -54,9 +60,9 @@ def cluster_embeddings(
     for c in unique:
         centroids[c] = embeddings[labels == c].mean(axis=0).astype(np.float32)
     n_noise = int((labels == -1).sum())
-    return ClusterResult(
+    return DetectionResult(
         labels=labels.astype(int),
-        n_clusters=len(unique),
+        n_persons=len(unique),
         n_noise=n_noise,
         centroids=centroids,
     )

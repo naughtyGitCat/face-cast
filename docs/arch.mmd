@@ -2,17 +2,17 @@ flowchart TB
     subgraph NAS["10.100.100.13 · NAS · 24/7"]
         FILES[("F:\China<br/>6,150 视频 · 1.9 TB")]
         FFMPEG["ffmpeg 抽帧<br/>UHD730 / A310 QSV"]
-        CLIENT["phase2-client.py"]
-        DB[("SQLite<br/>embeddings 缓存")]
-        HDB["HDBSCAN 聚类<br/>本地 CPU"]
+        CLIENT["face-cast (client)"]
+        DB[("SQLite<br/>frames / faces / embeddings<br/>persons / face_samples")]
+        DETECT["HDBSCAN<br/>识别 person"]
         NFO["改写 NFO<br/>添加 actor 字段"]
         FILES --> FFMPEG --> CLIENT
         CLIENT -.写.-> DB
-        DB --> HDB --> NFO
+        DB --> DETECT --> NFO
     end
 
     subgraph WS["10.100.100.11 · BARONCELLI · 按需开机"]
-        API["FastAPI :9000"]
+        API["bottle :9000"]
         IF["InsightFace<br/>buffalo_l 模型"]
         ORT["ONNX Runtime · CUDA"]
         GPU["RTX 2080 Ti<br/>11 GB · 推理时 ~150W"]
@@ -27,6 +27,6 @@ flowchart TB
     classDef gpu fill:#ffe5e5,stroke:#c0392b,stroke-width:3px,color:#000
     classDef store fill:#e8f8e8,stroke:#27ae60,stroke-width:2px,color:#000
     class FILES,DB store
-    class FFMPEG,CLIENT,HDB,NFO nas
+    class FFMPEG,CLIENT,DETECT,NFO nas
     class API,IF,ORT ws
     class GPU gpu

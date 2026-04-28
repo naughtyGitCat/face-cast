@@ -1,4 +1,4 @@
-# face-cluster server install (Windows)
+# face-cast server install (Windows)
 # 执行: powershell -ExecutionPolicy Bypass -File install-server.ps1
 #
 # 假设:
@@ -7,7 +7,7 @@
 
 param(
     [string]$InstallDir = "F:\face-server",
-    [string]$RepoUrl = "https://github.com/naughtyGitCat/face-cluster",
+    [string]$RepoUrl = "https://github.com/naughtyGitCat/face-cast",
     [string]$Branch = "main",
     [int]$Port = 9000
 )
@@ -15,7 +15,7 @@ param(
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $ErrorActionPreference = "Stop"
 
-Write-Host "═══ face-cluster server install ═══" -ForegroundColor Cyan
+Write-Host "═══ face-cast server install ═══" -ForegroundColor Cyan
 Write-Host "InstallDir: $InstallDir"
 Write-Host "Repo:       $RepoUrl ($Branch)"
 Write-Host "Port:       $Port"
@@ -64,7 +64,7 @@ Pop-Location
 
 # ─── 5. 防火墙开端口 ─────────────────────────────────────────────────────
 Write-Host "[5/5] 防火墙规则 :$Port ..." -ForegroundColor Yellow
-$ruleName = "face-cluster :$Port"
+$ruleName = "face-cast :$Port"
 if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
         -Protocol TCP -LocalPort $Port -Profile Any | Out-Null

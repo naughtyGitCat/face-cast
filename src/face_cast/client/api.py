@@ -1,4 +1,4 @@
-"""HTTP 客户端 — 跟 face-cluster server 说话."""
+"""HTTP 客户端 — 跟 face-cast server 说话."""
 
 from __future__ import annotations
 

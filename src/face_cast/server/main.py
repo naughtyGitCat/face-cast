@@ -1,4 +1,4 @@
-"""face-cluster 服务端 — 无状态人脸推理服务 (bottle 版).
+"""face-cast 服务端 — 无状态人脸推理服务 (bottle 版).
 
 设计:
   - 不存任何图像/embedding/历史
@@ -7,7 +7,7 @@
   - 客户端负责所有持久化与聚类
 
 启动:
-  python -m face_cluster.server.main --host 0.0.0.0 --port 9000
+  python -m face_cast.server.main --host 0.0.0.0 --port 9000
 
 Endpoints:
   GET  /health        探活
@@ -157,7 +157,7 @@ def _load_model() -> None:
     """同步载入 (启动时调一次, 主线程阻塞至 GPU 暖好)."""
     from insightface.app import FaceAnalysis  # noqa: PLC0415
 
-    print(f"[face-cluster] loading {MODEL_NAME} ...", flush=True)
+    print(f"[face-cast] loading {MODEL_NAME} ...", flush=True)
     t0 = time.time()
     fa = FaceAnalysis(
         name=MODEL_NAME,
@@ -167,7 +167,7 @@ def _load_model() -> None:
     _state["fa"] = fa
     _state["providers"] = fa.models["detection"].session.get_providers()
     print(
-        f"[face-cluster] ready in {time.time() - t0:.1f}s, providers={_state['providers']}",
+        f"[face-cast] ready in {time.time() - t0:.1f}s, providers={_state['providers']}",
         flush=True,
     )
 
@@ -177,7 +177,7 @@ def _load_model() -> None:
 
 def cli() -> None:
     """``face-server`` 入口 (pyproject 注册)."""
-    p = argparse.ArgumentParser(prog="face-server", description="face-cluster 推理服务")
+    p = argparse.ArgumentParser(prog="face-server", description="face-cast 推理服务")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=9000)
     p.add_argument(
@@ -205,10 +205,10 @@ def cli() -> None:
 
     if args.server == "waitress":
         from waitress import serve  # noqa: PLC0415
-        print(f"[face-cluster] waitress on http://{args.host}:{args.port}  (threads={args.threads})", flush=True)
+        print(f"[face-cast] waitress on http://{args.host}:{args.port}  (threads={args.threads})", flush=True)
         serve(app, host=args.host, port=args.port, threads=args.threads)
     else:
-        print(f"[face-cluster] wsgiref on http://{args.host}:{args.port}", flush=True)
+        print(f"[face-cast] wsgiref on http://{args.host}:{args.port}", flush=True)
         bottle.run(app, host=args.host, port=args.port, server="wsgiref", quiet=True)
 
 

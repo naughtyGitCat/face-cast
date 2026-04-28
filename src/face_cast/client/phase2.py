@@ -1,9 +1,9 @@
-"""Phase 2 主编排 — 把所有模块串起来.
+"""主编排 — 把所有模块串起来.
 
 流程:
   scan_videos        → 找视频
   extract_and_embed  → 抽帧 + POST 服务端 + 写 SQLite (frames/faces/embeddings)
-  cluster            → HDBSCAN, 写 cluster_runs/clusters/face_cluster
+  detect_persons     → HDBSCAN 跑识别, 写 detection_runs/persons/face_samples
   write_nfos         → 给每个 video 改 NFO, 加 actor
 
 每步都幂等 (查 SQLite 跳过), 中断后可断点续跑.
@@ -14,12 +14,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -33,7 +31,7 @@ from rich.progress import (
 
 from . import db
 from .api import FaceClient, ServerInfo
-from .cluster import ClusterResult, cluster_embeddings
+from .cluster import detect_persons
 from .extract import crop_face, extract_frame, ffprobe, sample_timestamps
 from .nfo import ActorInfo, nfo_path_for, update_actors
 
@@ -44,7 +42,7 @@ err_console = Console(stderr=True)
 
 
 @dataclass
-class Phase2Config:
+class Config:
     media_root: Path
     db_path: Path
     server_url: str
@@ -72,7 +70,7 @@ def scan_videos(media_root: Path) -> list[Path]:
 
 
 def extract_and_embed(
-    cfg: Phase2Config,
+    cfg: Config,
     conn: sqlite3.Connection,
     client: FaceClient,
     server: ServerInfo,
@@ -100,7 +98,7 @@ def extract_and_embed(
 
 
 def _process_one_video(
-    cfg: Phase2Config,
+    cfg: Config,
     conn: sqlite3.Connection,
     client: FaceClient,
     server: ServerInfo,
@@ -164,15 +162,15 @@ def _process_one_video(
                f"faces={len(faces)}", int((time.time() - t0) * 1000))
 
 
-# ─── 3. 聚类 ─────────────────────────────────────────────────────────────
+# ─── 3. 识别 person ──────────────────────────────────────────────────────
 
 
-def run_clustering(
-    cfg: Phase2Config,
+def run_detection(
+    cfg: Config,
     conn: sqlite3.Connection,
     server: ServerInfo,
 ) -> int:
-    """跑 HDBSCAN, 写库. 返回 run_id."""
+    """跑 HDBSCAN 识别 person, 写库. 返回 run_id."""
     console.print("[cyan]载入 embeddings...[/cyan]")
     face_ids, matrix = db.load_embeddings(conn, server.model_name, server.model_version)
     if matrix.shape[0] == 0:
@@ -195,32 +193,32 @@ def run_clustering(
 
     console.print("[cyan]HDBSCAN 跑起来...[/cyan]")
     t0 = time.time()
-    result = cluster_embeddings(matrix, **params)
+    result = detect_persons(matrix, **params)
     console.print(
-        f"  {result.n_clusters} clusters · {result.n_noise} noise · "
+        f"  {result.n_persons} 个 person · {result.n_noise} 噪声 · "
         f"耗时 {time.time() - t0:.1f}s"
     )
 
-    # 写 clusters + face_cluster
-    cluster_id_map: dict[int, int] = {}
-    for cluster_idx, centroid in result.centroids.items():
-        size = int((result.labels == cluster_idx).sum())
-        cluster_db_id = db.insert_cluster(conn, run_id, cluster_idx, size, centroid)
-        cluster_id_map[cluster_idx] = cluster_db_id
+    # 写 persons + face_samples
+    person_id_map: dict[int, int] = {}
+    for person_idx, centroid in result.centroids.items():
+        size = int((result.labels == person_idx).sum())
+        person_db_id = db.insert_person(conn, run_id, person_idx, size, centroid)
+        person_id_map[person_idx] = person_db_id
 
-    # 噪声也单独存一行 cluster_idx=-1 (size=n_noise) — 方便 UI 区分但不参与 actor 写入
+    # 噪声单独存一行 person_idx=-1, 方便 UI 区分但不参与 actor 写入
     if result.n_noise > 0:
-        cluster_id_map[-1] = db.insert_cluster(conn, run_id, -1, result.n_noise, None)
+        person_id_map[-1] = db.insert_person(conn, run_id, -1, result.n_noise, None)
 
     for face_id, label in zip(face_ids, result.labels, strict=True):
-        cid = cluster_id_map.get(int(label))
-        if cid is not None:
-            db.link_face_cluster(conn, face_id, cid)
+        pid = person_id_map.get(int(label))
+        if pid is not None:
+            db.link_face_sample(conn, face_id, pid)
 
-    db.finalize_run(conn, run_id, result.n_clusters, result.n_noise, set_active=True)
-    db.log(conn, "cluster", str(run_id), "ok",
-           f"clusters={result.n_clusters} noise={result.n_noise}")
-    console.print(f"[green]✓ cluster run #{run_id} 已激活[/green]")
+    db.finalize_run(conn, run_id, result.n_persons, result.n_noise, set_active=True)
+    db.log(conn, "detect", str(run_id), "ok",
+           f"persons={result.n_persons} noise={result.n_noise}")
+    console.print(f"[green]✓ detection run #{run_id} 已激活[/green]")
     return run_id
 
 
@@ -228,7 +226,7 @@ def run_clustering(
 
 
 def write_nfos(
-    cfg: Phase2Config,
+    cfg: Config,
     conn: sqlite3.Connection,
     run_id: int,
     videos: Iterable[Path] | None = None,
@@ -248,10 +246,10 @@ def write_nfos(
         task = progress.add_task("NFO", total=len(videos))
         for video in videos:
             progress.update(task, description=video.name[:40])
-            actors = db.video_actors(conn, str(video), run_id, cfg.nfo_min_appearances)
+            persons = db.video_persons(conn, str(video), run_id, cfg.nfo_min_appearances)
             actor_infos = [
-                ActorInfo(name=row["human_name"] or f"cluster_{row['cluster_idx']}")
-                for row in actors
+                ActorInfo(name=row["display_name"] or f"person_{row['person_idx']}")
+                for row in persons
             ]
             nfo = nfo_path_for(video)
             ok = update_actors(nfo, actor_infos, create_if_missing=False)
@@ -275,8 +273,8 @@ def write_nfos(
 # ─── 整合 ─────────────────────────────────────────────────────────────────
 
 
-def run_full(cfg: Phase2Config) -> None:
-    """端到端跑一遍 Phase 2."""
+def run_full(cfg: Config) -> None:
+    """端到端跑一遍."""
     conn = db.connect(cfg.db_path)
     client = FaceClient(cfg.server_url)
 
@@ -297,7 +295,7 @@ def run_full(cfg: Phase2Config) -> None:
         return
 
     extract_and_embed(cfg, conn, client, server, videos)
-    run_id = run_clustering(cfg, conn, server)
+    run_id = run_detection(cfg, conn, server)
     write_nfos(cfg, conn, run_id, videos)
 
-    console.print(f"[bold green]Phase 2 done[/bold green] · run_id={run_id}")
+    console.print(f"[bold green]done[/bold green] · run_id={run_id}")

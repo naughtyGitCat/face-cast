@@ -1,5 +1,5 @@
 [project]
-name = "face-cluster"
+name = "face-cast"
 version = "0.1.0"
 description = "媒体库人脸识别 + 同人聚类工具. 服务端 GPU 推理, 客户端编排, 多模型友好 schema."
 readme = "README.md"
@@ -30,15 +30,15 @@ server = [
 ]
 
 [project.scripts]
-face-server = "face_cluster.server.main:cli"
-face-cluster = "face_cluster.client.cli:cli"
+face-server = "face_cast.server.main:cli"
+face-cast = "face_cast.client.cli:cli"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/face_cluster"]
+packages = ["src/face_cast"]
 
 [tool.uv]
 package = true
