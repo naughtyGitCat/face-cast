@@ -9,7 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import db
+from . import db, portrait
 from .api import FaceClient
 from .phase2 import (
     Config,
@@ -205,6 +205,44 @@ def cmd_name_person(
         raise typer.Exit(1)
     console.print(f"[green]✓[/green] person {person_idx} → '{name}'")
     console.print("[dim]改完后 face-cast write-nfo 重写 NFO[/dim]")
+
+
+@app.command(name="export-portraits")
+def cmd_export_portraits(
+    db_path: DBOpt = Path("./face_cast.db"),
+    run_id: Annotated[int | None, typer.Option(help="使用哪个 detection_run, 默认 active")] = None,
+    include_unnamed: Annotated[
+        bool, typer.Option("--include-unnamed", help="也导出未命名 person (用 person_N 当文件名)")
+    ] = False,
+    no_redundant: Annotated[
+        bool, typer.Option("--no-redundant", help="只在第一个相关目录放一份, 靠 Jellyfin 全局缓存")
+    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="只打印, 不写文件")] = False,
+):
+    """给每个 person 选代表头像, 写 .actors/<name>.jpg 到视频目录.
+
+    Jellyfin 扫到 NFO 里 <actor><name>X</name></actor> 后, 自动找同目录
+    .actors/X.jpg 当头像. 不需要在 NFO 里加 <thumb>.
+    """
+    conn = db.connect(db_path.resolve())
+    if run_id is None:
+        active = db.active_run(conn)
+        if active is None:
+            raise typer.BadParameter("没有 active run, 跑 detect 先")
+        run_id = active["id"]
+    stats = portrait.export(
+        conn,
+        run_id=run_id,
+        include_unnamed=include_unnamed,
+        redundant=not no_redundant,
+        dry_run=dry_run,
+    )
+    console.print(
+        f"\n[bold green]导出完成[/bold green]: "
+        f"{stats['persons']} 个 person · {stats['files']} 个文件 · {stats['dirs']} 个目录"
+    )
+    if dry_run:
+        console.print("[dim](dry-run, 实际未写入)[/dim]")
 
 
 @app.command(name="stats")

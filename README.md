@@ -87,6 +87,9 @@ uv run face-cast name-person 7 '李雅'
 
 # 5. 重写 NFO (改名后)
 uv run face-cast write-nfo
+
+# 6. 导出代表头像 (写 .actors/<名>.jpg 到视频目录)
+uv run face-cast export-portraits
 ```
 
 ## CLI 子命令
@@ -100,6 +103,7 @@ uv run face-cast write-nfo
 | `write-nfo` | 只重写 NFO (识别已完成 / 用户改名后) |
 | `list-persons` | 列出当前 active run 的所有 person |
 | `name-person` | 给某个 person_idx 起人类名 |
+| `export-portraits` | 给每个 person 选代表头像, 写 `.actors/<名>.jpg` |
 | `stats` | 整体统计 |
 
 ## 服务端 API
@@ -154,6 +158,24 @@ uv run face-cast write-nfo
 | HDBSCAN 识别 person | ~2 分钟 (CPU) |
 | 写 NFO | ~5 分钟 |
 | **端到端** | **~30-45 分钟** |
+
+## 演员头像如何流到 Jellyfin
+
+`export-portraits` 流程：
+
+1. **挑代表 face**：每个 person 算 `det_score × cosine_sim_to_centroid`，分最高的那张 face 当头像
+2. **写到 `.actors/`**：把 `faces.crop_jpeg` (224×224 缓存) 写为 `<视频目录>/.actors/<display_name>.jpg`
+3. **Jellyfin 自动发现**：扫到 NFO 里 `<actor><name>李雅</name></actor>` 时，会查同目录 `.actors/李雅.jpg`，找到就当头像
+4. **全局缓存**：Jellyfin 看到第一份后**全库共享**这个 actor 的头像
+
+不需要改 NFO 的 `<actor>` 块加 `<thumb>` —— Jellyfin 的 `.actors/` 自动发现机制比 inline 路径更省事。
+
+```bash
+uv run face-cast export-portraits           # 只导命名过的 person (推荐)
+uv run face-cast export-portraits --include-unnamed   # 把未命名的也导
+uv run face-cast export-portraits --dry-run           # 只看不写
+uv run face-cast export-portraits --no-redundant      # 每 person 只在 1 个目录放
+```
 
 ## 升级模型
 
