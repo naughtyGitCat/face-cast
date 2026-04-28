@@ -54,12 +54,9 @@ Pop-Location
 # ─── 4. 预热模型 (首次会下载 ~280 MB buffalo_l) ──────────────────────────
 Write-Host "[4/5] 预热 buffalo_l 模型 ..." -ForegroundColor Yellow
 Push-Location $InstallDir
-& $uv run python -c @"
-from insightface.app import FaceAnalysis
-fa = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-fa.prepare(ctx_id=0)
-print('model providers:', fa.models['detection'].session.get_providers())
-"@
+# 用单行 python; PowerShell 解析 here-string 时会把 Python 关键字误识别
+$preheatScript = "from insightface.app import FaceAnalysis; fa = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider','CPUExecutionProvider']); fa.prepare(ctx_id=0); print('model providers:', fa.models['detection'].session.get_providers())"
+& $uv run python -c $preheatScript
 Pop-Location
 
 # ─── 5. 防火墙开端口 ─────────────────────────────────────────────────────
