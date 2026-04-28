@@ -1,4 +1,4 @@
-# face-cast server install (Windows)
+﻿# face-cast server install (Windows)
 # 执行: powershell -ExecutionPolicy Bypass -File install-server.ps1
 #
 # 假设:
