@@ -1,0 +1,29 @@
+{% extends "_base.html" %}
+{% block head_extra %}
+  {% if is_running %}<meta http-equiv="refresh" content="5">{% endif %}
+{% endblock %}
+{% block topbar %}
+  <a href="/jobs" class="meta">← 任务列表</a>
+{% endblock %}
+{% block main %}
+<h1>
+  任务 #{{ job.id }}
+  <span class="meta">
+    {{ job.kind }} ·
+    <span class="status-{{ job.status }}">{{ job.status }}</span>
+    {% if job.returncode is not none %}(rc={{ job.returncode }}){% endif %}
+    · {{ job.elapsed }}s
+    {% if is_running %} · 5s 自动刷新{% endif %}
+  </span>
+</h1>
+
+<dl class="job-meta">
+  {% if job.target %}<dt>路径</dt><dd><code>{{ job.target }}</code></dd>{% endif %}
+  <dt>命令</dt><dd><code>{{ job.cmd }}</code></dd>
+  <dt>PID</dt><dd>{{ job.pid }}</dd>
+  <dt>日志文件</dt><dd><code>{{ job.log_path }}</code> · <a href="/jobs/{{ job.id }}/log">raw text</a></dd>
+</dl>
+
+<h2>完整日志</h2>
+<pre class="job-log full">{{ job.log }}</pre>
+{% endblock %}

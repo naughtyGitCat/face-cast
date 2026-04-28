@@ -12,25 +12,67 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote as urlquote
 
 from bottle import Bottle, HTTPResponse, redirect, request, response, static_file
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from .. import db
+from .. import db, fs
 from ..cluster import split_subcluster
+from ..config import Config
 from ..jellyfin import JellyfinClient, push_named_persons
+from ..scan_jobs import JobManager
 
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
-def create_app(db_path: Path) -> Bottle:
+# ─── bottle UTF-8 helper ─────────────────────────────────────────────
+# bottle 0.13 对 application/x-www-form-urlencoded body 和 QUERY_STRING 默认
+# 按 latin1 decode (BaseRequest.POST / BaseRequest.query). 直接用 .get() 拿到
+# 的中文是双字节假 latin1 str, 写 SQLite 会双重编码乱码.
+# 必须走 .getunicode() 让 bottle 内部做 s.encode('latin1').decode('utf-8')
+# 把 hack 还原. 全部 user input 都通过这两个 helper 读, 防止漏掉.
+def _q(name: str, default: str = "") -> str:
+    """读 ?foo=... query string, UTF-8 安全."""
+    return request.query.getunicode(name, encoding="utf-8") or default
+
+
+def _f(name: str, default: str = "") -> str:
+    """读 POST form body, UTF-8 安全."""
+    return request.forms.getunicode(name, encoding="utf-8") or default
+
+
+def _find_face_cast_bin() -> Path:
+    """找 face-cast 可执行文件, 用来 spawn detect/cluster 子进程.
+
+    优先 .venv/Scripts/face-cast.exe (NSSM 服务安装的位置), fallback 到
+    sys.executable 同目录, 再 fallback 到 python -m face_cast.client.cli.
+    """
+    here = Path(sys.executable).parent
+    suffix = ".exe" if os.name == "nt" else ""
+    candidates = [here / f"face-cast{suffix}"]
+    for c in candidates:
+        if c.exists():
+            return c
+    # fallback: 用 sys.executable -m
+    return Path(sys.executable)
+
+
+def create_app(db_path: Path, config: Config | None = None) -> Bottle:
     app = Bottle()
     db_path = Path(db_path)
+    cfg = config or Config()
+
+    # job runner: 把 jobs 元数据 + log 放在 db 同目录的 jobs/
+    job_mgr = JobManager(db_path.parent / "jobs")
+    face_cast_bin = _find_face_cast_bin()
 
     env = Environment(
         loader=FileSystemLoader(str(_TEMPLATES_DIR)),
@@ -38,6 +80,9 @@ def create_app(db_path: Path) -> Bottle:
         enable_async=False,
     )
     env.globals["app_title"] = "face-cast UI"
+    env.globals["cfg"] = cfg
+    # urlquote: 模板里 path 进 query string 必须先 encode (中文/反斜杠)
+    env.filters["urlquote"] = lambda s: urlquote(str(s), safe="")
 
     def render(name: str, **ctx: Any) -> str:
         return env.get_template(name).render(**ctx)
@@ -135,7 +180,7 @@ def create_app(db_path: Path) -> Bottle:
     def name_person(idx: int):
         c = conn()
         run_id = active_run_id(c)
-        new_name = (request.forms.get("display_name") or "").strip()
+        new_name = _f("display_name").strip()
         c.execute(
             "UPDATE persons SET display_name = ? WHERE run_id = ? AND person_idx = ?",
             (new_name or None, run_id, idx),
@@ -151,7 +196,7 @@ def create_app(db_path: Path) -> Bottle:
         """body: source_idx 必填, 把它合并到当前 idx (target)."""
         c = conn()
         run_id = active_run_id(c)
-        src_str = request.forms.get("source_idx") or ""
+        src_str = _f("source_idx")
         try:
             sources = [int(x) for x in src_str.split(",") if x.strip()]
         except ValueError:
@@ -237,10 +282,11 @@ def create_app(db_path: Path) -> Bottle:
     def push_one(idx: int):
         c = conn()
         run_id = active_run_id(c)
-        url = request.forms.get("jf_url") or "http://10.100.100.13:8096"
-        api_key = request.forms.get("jf_api_key") or ""
+        # form value > config > 兜底默认; 配了 config.toml 就不用每次填表单
+        url = _f("jf_url") or cfg.jellyfin.url or "http://10.100.100.13:8096"
+        api_key = _f("jf_api_key") or cfg.jellyfin.api_key
         if not api_key:
-            return "missing api_key"
+            return "missing api_key (填表单或在 config.toml [jellyfin].api_key)"
         # 限定到这一个 person
         person = c.execute(
             "SELECT * FROM persons WHERE run_id=? AND person_idx=?",
@@ -260,18 +306,18 @@ def create_app(db_path: Path) -> Bottle:
         jf_id = jf.find_person(person["display_name"])
         if jf_id is None:
             return f"Jellyfin 里没找到 person '{person['display_name']}'"
-        ok = jf.upload_primary(jf_id, crop)
-        return f"uploaded ({len(crop)} B)" if ok else "upload failed"
+        ok, msg = jf.upload_primary(jf_id, crop)
+        return f"uploaded {len(crop)} B ({msg})" if ok else f"upload failed: {msg}"
 
     @app.post("/api/push-all")
     def push_all():
         c = conn()
         run_id = active_run_id(c)
-        url = request.forms.get("jf_url") or "http://10.100.100.13:8096"
-        api_key = request.forms.get("jf_api_key") or ""
+        url = _f("jf_url") or cfg.jellyfin.url or "http://10.100.100.13:8096"
+        api_key = _f("jf_api_key") or cfg.jellyfin.api_key
         overwrite = bool(request.forms.get("overwrite"))
         if not api_key:
-            return "missing api_key"
+            return "missing api_key (填表单或在 config.toml [jellyfin].api_key)"
         jf = JellyfinClient(base_url=url, api_key=api_key)
         stats = push_named_persons(c, run_id, jf, overwrite=overwrite)
         return f"{stats}"
@@ -289,7 +335,7 @@ def create_app(db_path: Path) -> Bottle:
     def folder_detail():
         c = conn()
         run_id = active_run_id(c)
-        path = request.query.get("path", "")
+        path = _q("path")
         if not path:
             redirect("/folders")
         videos = db.folder_videos(c, run_id, path)
@@ -302,7 +348,7 @@ def create_app(db_path: Path) -> Bottle:
         c = conn()
         run_id = active_run_id(c)
         try:
-            min_sim = float(request.query.get("min", "0.45"))
+            min_sim = float(_q("min", "0.45"))
         except ValueError:
             min_sim = 0.45
         pairs = db.candidate_pairs(c, run_id, min_similarity=min_sim, limit=200)
@@ -322,6 +368,152 @@ def create_app(db_path: Path) -> Bottle:
                 p[f"{side}_thumb"] = thumb_cache[pid]
         return render("candidates.html", pairs=pairs, min_sim=min_sim, run_id=run_id)
 
+    # ─── 本机磁盘浏览 ─────────────────────────────────────────────────
+    # 纯 HTML5 风格: 每点一次都跳一次新页, breadcrumb 导航, 不依赖 JS.
+
+    def _breadcrumbs(path: str) -> list[tuple[str, str]]:
+        """把 'F:\\China\\王东瑶' 拆成 [('F:\\', 'F:'), ('F:\\China', 'China'), ...]"""
+        if not path:
+            return []
+        sep = "\\" if "\\" in path else "/"
+        parts = [p for p in path.rstrip(sep).split(sep) if p]
+        crumbs: list[tuple[str, str]] = []
+        if os.name == "nt" and parts and parts[0].endswith(":"):
+            # Windows: 第一段是 'F:', 盘根需要 'F:\\' 才能 os.scandir
+            crumbs.append((parts[0] + sep, parts[0]))
+            for i in range(1, len(parts)):
+                full = parts[0] + sep + sep.join(parts[1:i + 1])
+                crumbs.append((full, parts[i]))
+        else:
+            for i, name in enumerate(parts):
+                crumbs.append((sep + sep.join(parts[:i + 1]), name))
+        return crumbs
+
+    @app.get("/browse")
+    def browse():
+        path = _q("path")
+        if path:
+            entries = fs.list_dirs(path)
+        else:
+            entries = fs.list_drives()
+        # 给每个 entry 补已扫描视频数 (递归)
+        c = conn()
+        rich_entries = []
+        for e in entries:
+            scanned = db.folder_scan_count(c, e.path)
+            rich_entries.append({
+                "name": e.name,
+                "path": e.path,
+                "has_subdirs": e.has_subdirs,
+                "video_count": e.video_count,
+                "scanned": scanned,
+            })
+        # 当前 path 的 scanned 总数 (作为页面 header 信息)
+        path_scanned = db.folder_scan_count(c, path) if path else 0
+        return render(
+            "browse.html",
+            path=path,
+            entries=rich_entries,
+            breadcrumbs=_breadcrumbs(path),
+            path_scanned=path_scanned,
+            server_configured=cfg.server.configured,
+        )
+
+    @app.post("/api/scan")
+    def start_scan():
+        path = _f("path")
+        if not path:
+            raise HTTPResponse(status=400, body="missing path")
+        if not Path(path).is_dir():
+            raise HTTPResponse(status=400, body=f"not a directory: {path}")
+        if not cfg.server.configured:
+            raise HTTPResponse(
+                status=400,
+                body="config.toml [server].url 没配, 不知道 inference server 地址",
+            )
+        info = job_mgr.start_extract(
+            face_cast_bin=face_cast_bin,
+            path=path,
+            db_path=db_path,
+            server_url=cfg.server.url,
+            frames=cfg.scan.frames,
+        )
+        redirect(f"/jobs#{info.id}")
+
+    @app.post("/api/cluster")
+    def start_cluster():
+        if not cfg.server.configured:
+            raise HTTPResponse(
+                status=400,
+                body="config.toml [server].url 没配",
+            )
+        info = job_mgr.start_cluster(
+            face_cast_bin=face_cast_bin,
+            db_path=db_path,
+            server_url=cfg.server.url,
+        )
+        if info is None:
+            raise HTTPResponse(status=409, body="已有 cluster job 在跑, 等它完")
+        redirect(f"/jobs#{info.id}")
+
+    @app.get("/jobs/<job_id>")
+    def job_detail(job_id: str):
+        j = job_mgr.get(job_id)
+        if j is None:
+            raise HTTPResponse(status=404, body=f"job {job_id} not found")
+        full_log = job_mgr.read_log_full(job_id)
+        view = {
+            "id": j.id,
+            "kind": j.kind,
+            "target": j.target,
+            "status": j.status,
+            "elapsed": j.elapsed,
+            "returncode": j.returncode,
+            "pid": j.pid,
+            "started_at": j.started_at,
+            "ended_at": j.ended_at,
+            "cmd": " ".join(j.cmd),
+            "log": full_log,
+            "log_path": j.log_path,
+        }
+        return render("job_detail.html", job=view, is_running=(j.status == "running"))
+
+    @app.get("/jobs/<job_id>/log")
+    def job_log_raw(job_id: str):
+        """完整日志 text/plain. ``?tail=N`` 只要末 N 行."""
+        j = job_mgr.get(job_id)
+        if j is None:
+            raise HTTPResponse(status=404)
+        try:
+            n = int(_q("tail", "0"))
+        except ValueError:
+            n = 0
+        if n > 0:
+            text = job_mgr.tail_log(job_id, lines=n)
+        else:
+            text = job_mgr.read_log_full(job_id)
+        response.content_type = "text/plain; charset=utf-8"
+        return text
+
+    @app.get("/jobs")
+    def jobs_index():
+        jobs = job_mgr.list_jobs()
+        # dataclass → dict + tail, 给模板用
+        rich = [
+            {
+                "id": j.id,
+                "kind": j.kind,
+                "target": j.target,
+                "status": j.status,
+                "elapsed": j.elapsed,
+                "returncode": j.returncode,
+                "tail": job_mgr.tail_log(j.id, lines=30),
+                "cmd": " ".join(j.cmd),
+            }
+            for j in jobs
+        ]
+        return render("jobs.html", jobs=rich, has_running=job_mgr.has_running())
+
     # ─── 静态资源 ─────────────────────────────────────────────────────
 
     @app.get("/static/<filename:path>")
@@ -332,9 +524,15 @@ def create_app(db_path: Path) -> Bottle:
 
 
 def serve(db_path: Path, host: str = "0.0.0.0", port: int = 9100,
-          server: str = "waitress") -> None:
-    app = create_app(db_path)
-    print(f"[face-cast UI] db={db_path} listening on http://{host}:{port}", flush=True)
+          server: str = "waitress", config_path: Path | None = None) -> None:
+    cfg = Config.load(path=config_path, db_path=db_path)
+    app = create_app(db_path, cfg)
+    cfg_info = (f" config={cfg.source_path}"
+                if cfg.source_path is not None else " config=<none>")
+    jf_info = (f" jellyfin={cfg.jellyfin.url} (key set)"
+               if cfg.jellyfin.configured else " jellyfin=<not configured>")
+    print(f"[face-cast UI] db={db_path}{cfg_info}{jf_info}", flush=True)
+    print(f"[face-cast UI] listening on http://{host}:{port}", flush=True)
     if server == "waitress":
         try:
             from waitress import serve as waitress_serve  # noqa: PLC0415

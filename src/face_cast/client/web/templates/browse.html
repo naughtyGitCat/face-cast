@@ -1,0 +1,74 @@
+{% extends "_base.html" %}
+{% block topbar %}
+  <span class="meta crumbs">
+    <a href="/browse">本机磁盘</a>
+    {% for crumb_path, crumb_name in breadcrumbs %}
+      / <a href="/browse?path={{ crumb_path|urlquote }}">{{ crumb_name }}</a>
+    {% endfor %}
+  </span>
+{% endblock %}
+{% block main %}
+<h1>
+  {% if path %}{{ path }}{% else %}本机磁盘{% endif %}
+  {% if path and path_scanned %}
+    <span class="meta">已扫描 {{ path_scanned }} 个视频</span>
+  {% endif %}
+</h1>
+
+{% if not server_configured %}
+<p class="hint" style="color:#b91c1c;">
+  ⚠ 还没在 <code>config.toml</code> 配 <code>[server].url</code>, 扫描按钮会拒绝.
+  填上 inference server 地址 (e.g. <code>http://10.100.100.11:8001</code>) 再重启 face-cast-ui.
+</p>
+{% endif %}
+
+{% if path %}
+<div class="actions">
+  <form method="post" action="/api/scan" class="inline"
+        onsubmit="return confirm('递归扫描 {{ path }} ? 这会跑 face-cast detect, 视频多的话要很久, 进度去 /jobs 看.')">
+    <input type="hidden" name="path" value="{{ path }}">
+    <button>扫描此目录 (递归)</button>
+  </form>
+  <a class="muted" href="/jobs">→ 扫描任务列表</a>
+</div>
+{% endif %}
+
+<table class="folder-tbl">
+<thead><tr>
+  <th>目录</th>
+  <th class="num">直接子视频</th>
+  <th class="num">已扫描 (递归)</th>
+  <th></th>
+</tr></thead>
+<tbody>
+{% for e in entries %}
+<tr>
+  <td>
+    {% if e.has_subdirs %}
+      <a href="/browse?path={{ e.path|urlquote }}">📁 {{ e.name }}</a>
+    {% else %}
+      <span class="muted">📁 {{ e.name }}</span>
+    {% endif %}
+  </td>
+  <td class="num">{% if e.video_count %}{{ e.video_count }}{% endif %}</td>
+  <td class="num">
+    {% if e.scanned %}
+      <a href="/folder?path={{ e.path|urlquote }}" class="pill named">{{ e.scanned }}</a>
+    {% endif %}
+  </td>
+  <td>
+    {% if e.video_count > 0 or e.scanned > 0 %}
+    <form method="post" action="/api/scan" class="inline"
+          onsubmit="return confirm('扫描 {{ e.path }} ?')">
+      <input type="hidden" name="path" value="{{ e.path }}">
+      <button class="merge-btn">扫描</button>
+    </form>
+    {% endif %}
+  </td>
+</tr>
+{% else %}
+<tr><td colspan="4" class="hint">空目录 / 没权限读</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

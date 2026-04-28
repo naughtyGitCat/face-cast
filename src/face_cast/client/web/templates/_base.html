@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 <link rel="stylesheet" href="/static/style.css">
+{% block head_extra %}{% endblock %}
 </head>
 <body>
 <header class="topbar">
@@ -13,7 +14,9 @@
   <nav class="navlinks">
     <a href="/">Persons</a>
     <a href="/folders">Folders</a>
+    <a href="/browse">磁盘</a>
     <a href="/candidates">合并候选</a>
+    <a href="/jobs">任务</a>
   </nav>
   {% block topbar %}{% endblock %}
 </header>

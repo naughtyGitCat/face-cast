@@ -22,10 +22,12 @@ cache/
 crops/
 frames/
 
-# secrets / config
+# secrets / config — 真值不进 git, 只留 config.toml.example 当模板
 .env
 .env.local
 config.local.*
+config.toml
+!config.toml.example
 
 # IDE
 .idea/

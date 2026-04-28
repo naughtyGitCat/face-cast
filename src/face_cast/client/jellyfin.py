@@ -11,6 +11,7 @@ Jellyfin 在某些版本对 ``.actors/<name>.jpg`` 自动发现不可靠 (10.11+
 
 from __future__ import annotations
 
+import base64
 import sqlite3
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -46,15 +47,23 @@ class JellyfinClient:
                 return it["Id"]
         return None
 
-    def upload_primary(self, person_id: str, jpg_bytes: bytes) -> bool:
-        """POST jpg 作为 Primary 图. 返回 True 成功."""
+    def upload_primary(self, person_id: str, jpg_bytes: bytes) -> tuple[bool, str]:
+        """POST jpg 作为 Primary 图. 返回 (ok, msg).
+
+        Jellyfin 的 ``/Items/{id}/Images/{type}`` 端点要求 body 是 **base64-encoded**
+        的图像数据 (不是 raw bytes), Content-Type 仍是真实图像类型 image/jpeg.
+        raw bytes 会得到 HTTP 500 'Error processing request.'.
+        """
+        body = base64.b64encode(jpg_bytes)
         r = requests.post(
             f"{self.base_url}/Items/{person_id}/Images/Primary",
-            data=jpg_bytes,
+            data=body,
             headers={**self._h(), "Content-Type": "image/jpeg"},
             timeout=self.timeout * 2,
         )
-        return r.ok
+        if r.ok:
+            return True, f"HTTP {r.status_code}"
+        return False, f"HTTP {r.status_code}: {r.text[:200]}"
 
 
 def push_named_persons(
@@ -126,12 +135,12 @@ def push_named_persons(
             stats["uploaded"] += 1
             continue
 
-        ok = jf.upload_primary(jf_id, crop_jpg)
+        ok, msg = jf.upload_primary(jf_id, crop_jpg)
         if ok:
             stats["uploaded"] += 1
-            console.print(f"[green]✓[/green] {p['display_name']}: {len(crop_jpg)} B")
+            console.print(f"[green]OK[/green] {p['display_name']}: {len(crop_jpg)} B ({msg})")
         else:
             stats["failed"] += 1
-            console.print(f"[red]FAIL[/red] {p['display_name']}: upload 失败")
+            console.print(f"[red]FAIL[/red] {p['display_name']}: {msg}")
 
     return stats

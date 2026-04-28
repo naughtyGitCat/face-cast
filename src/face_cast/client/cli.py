@@ -406,10 +406,16 @@ def cmd_ui(
     db_path: DBOpt = Path("./face_cast.db"),
     host: Annotated[str, typer.Option("--host", help="bind 地址")] = "0.0.0.0",
     port: Annotated[int, typer.Option("--port", help="端口")] = 9100,
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", help="config.toml 路径; 不给就从 db 同目录或 ~/.config/face-cast/ 找",
+                     envvar="FACE_CAST_CONFIG"),
+    ] = None,
 ):
     """启动 web UI (浏览器里整理 cluster: 命名/合并/拆分/推 Jellyfin)."""
     from .web.app import serve  # noqa: PLC0415
-    serve(db_path.resolve(), host=host, port=port)
+    serve(db_path.resolve(), host=host, port=port,
+          config_path=config.resolve() if config is not None else None)
 
 
 @app.command(name="stats")

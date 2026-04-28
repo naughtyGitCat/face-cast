@@ -20,9 +20,14 @@
   </form>
 
   <form hx-post="/person/{{ person.person_idx }}/push-jellyfin" class="inline jf">
-    <input type="text" name="jf_url" placeholder="Jellyfin URL"
-           value="http://10.100.100.13:8096">
-    <input type="password" name="jf_api_key" placeholder="API key">
+    {% if cfg.jellyfin.configured %}
+      {# config.toml 已配, 不显示输入框, 服务端用 cfg 兜底 #}
+      <span class="meta" title="{{ cfg.jellyfin.url }}">→ {{ cfg.jellyfin.url }}</span>
+    {% else %}
+      <input type="text" name="jf_url" placeholder="Jellyfin URL"
+             value="http://10.100.100.13:8096">
+      <input type="password" name="jf_api_key" placeholder="API key">
+    {% endif %}
     <button>推 Jellyfin 头像</button>
   </form>
 </section>

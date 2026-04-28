@@ -152,6 +152,64 @@ button.link {
 .sim-score b { font-size: 18px; color: #1f2937; }
 .cand-mid .merge-btn { width: 100px; padding: 6px; font-size: 12px; margin: 0; }
 
+/* breadcrumb */
+.crumbs a { color: #9ca3af; text-decoration: none; }
+.crumbs a:hover { color: #fff; text-decoration: underline; }
+
+/* 任务卡片 */
+.job-list { display: flex; flex-direction: column; gap: 12px; max-width: 1400px; }
+.job-card {
+  background: #fff; border-radius: 8px; padding: 12px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  border-left: 4px solid #d1d5db;
+}
+.job-card.status-running { border-left-color: #fbbf24; }
+.job-card.status-done    { border-left-color: #10b981; }
+.job-card.status-failed  { border-left-color: #ef4444; }
+.job-card.status-stale   { border-left-color: #6b7280; }
+.job-head {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: 12px; font-size: 13px; margin-bottom: 8px;
+}
+.job-head .job-id { color: #6b7280; }
+.job-head .job-kind {
+  background: #e5e7eb; padding: 1px 8px; border-radius: 4px;
+  font-size: 12px; font-weight: 600;
+}
+.job-head .job-status { font-size: 12px; font-weight: 600; }
+.job-head .status-running { color: #b45309; }
+.job-head .status-done    { color: #047857; }
+.job-head .status-failed  { color: #b91c1c; }
+.job-head .status-stale   { color: #6b7280; }
+.job-head .job-target {
+  color: #374151; font-family: ui-monospace, monospace;
+  overflow: hidden; text-overflow: ellipsis; max-width: 600px;
+  white-space: nowrap;
+}
+.job-head .job-time { color: #9ca3af; margin-left: auto; }
+.job-cmd, .job-log {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 11px; line-height: 1.4;
+  background: #f9fafb; padding: 8px 10px; border-radius: 4px;
+  overflow-x: auto; white-space: pre;
+  margin: 4px 0;
+}
+.job-cmd { color: #6b7280; }
+.job-log {
+  background: #1f2937; color: #d1d5db;
+  max-height: 240px; overflow-y: auto;
+}
+.job-log.full { max-height: 70vh; font-size: 12px; }
+.job-meta {
+  display: grid; grid-template-columns: 100px 1fr; gap: 4px 16px;
+  margin: 12px 0 24px; font-size: 13px;
+}
+.job-meta dt { color: #6b7280; }
+.job-meta dd { margin: 0; word-break: break-all; }
+.job-meta code { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+.job-id a, .job-card a.job-id { text-decoration: none; }
+.job-id a:hover code { text-decoration: underline; }
+
 /* 视频列表 */
 .video-list { list-style: none; padding: 0; font-size: 13px; }
 .video-list li { padding: 4px 0; border-bottom: 1px solid #e5e7eb; }

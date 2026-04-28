@@ -1,0 +1,45 @@
+{% extends "_base.html" %}
+{% block head_extra %}
+  {# 有任务在跑就 5 秒自动整页刷新, 无 JS #}
+  {% if has_running %}<meta http-equiv="refresh" content="5">{% endif %}
+{% endblock %}
+{% block topbar %}
+  <span class="meta">
+    扫描任务
+    {% if has_running %} · <span style="color:#fbbf24;">running</span> (5s 自动刷新){% endif %}
+  </span>
+{% endblock %}
+{% block main %}
+<h1>扫描任务</h1>
+
+<div class="actions">
+  <form method="post" action="/api/cluster" class="inline"
+        onsubmit="return confirm('重新跑全局聚类 (cluster) — HDBSCAN 会基于现有所有 embedding 重新分组成 person, 之前手动 merge/split 过的会被覆盖. 旧 run 不删, UI 默认显示新 run. 继续?')">
+    <button>重新聚类 (cluster)</button>
+  </form>
+  <a class="muted" href="/browse">← 选目录扫描</a>
+</div>
+
+<div class="job-list">
+{% for j in jobs %}
+<article class="job-card status-{{ j.status }}" id="{{ j.id }}">
+  <header class="job-head">
+    <a href="/jobs/{{ j.id }}" class="job-id"><code>#{{ j.id }}</code></a>
+    <span class="job-kind">{{ j.kind }}</span>
+    <span class="job-status status-{{ j.status }}">
+      {{ j.status }}{% if j.returncode is not none %} (rc={{ j.returncode }}){% endif %}
+    </span>
+    {% if j.target %}<span class="job-target" title="{{ j.target }}">{{ j.target }}</span>{% endif %}
+    <span class="job-time">{{ j.elapsed }}s</span>
+    <a href="/jobs/{{ j.id }}" class="muted" style="margin-left:8px;">详情 →</a>
+  </header>
+  <pre class="job-cmd">$ {{ j.cmd }}</pre>
+  {% if j.tail %}
+  <pre class="job-log">{{ j.tail }}</pre>
+  {% endif %}
+</article>
+{% else %}
+<p class="hint">还没任务. 去 <a href="/browse">本机磁盘</a> 选一个目录扫.</p>
+{% endfor %}
+</div>
+{% endblock %}

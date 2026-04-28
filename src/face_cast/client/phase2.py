@@ -79,22 +79,38 @@ def extract_and_embed(
     videos = list(videos)
     detector = server.detector
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TextColumn("·"),
-        TimeElapsedColumn(),
-        TextColumn("·"),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("视频", total=len(videos))
-        for video in videos:
-            progress.update(task, description=video.name[:40])
+    # 终端 (TTY): 用 rich Progress 漂亮的进度条 (自带 \r 覆盖)
+    # 非 TTY (NSSM 服务里的 subprocess, 输出到日志文件): 改打逐行
+    # `[i/N] name`, 这样后台 job 日志才能看到每个视频的进度. 如果还用 rich
+    # Progress, 它会用 \r 覆盖, 日志里只剩最后一行.
+    if console.is_terminal:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TextColumn("·"),
+            TimeElapsedColumn(),
+            TextColumn("·"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("视频", total=len(videos))
+            for video in videos:
+                progress.update(task, description=video.name[:40])
+                _process_one_video(cfg, conn, client, server, detector, video)
+                progress.advance(task)
+    else:
+        total = len(videos)
+        t_start = time.time()
+        for i, video in enumerate(videos, 1):
+            t0 = time.time()
+            print(f"[{i}/{total}] {video.name}", flush=True)
             _process_one_video(cfg, conn, client, server, detector, video)
-            progress.advance(task)
+            dt = time.time() - t0
+            elapsed = time.time() - t_start
+            eta = (elapsed / i) * (total - i) if i > 0 else 0
+            print(f"      ✓ {dt:.1f}s · 总 {elapsed:.0f}s · ETA {eta:.0f}s", flush=True)
 
 
 def _process_one_video(

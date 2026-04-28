@@ -416,6 +416,24 @@ def face_crop(conn: sqlite3.Connection, face_id: int) -> bytes | None:
     return row["crop_jpeg"] if row else None
 
 
+def folder_scan_count(conn: sqlite3.Connection, path: str) -> int:
+    """递归: 这个目录下已经被 detect 过的视频数 (DISTINCT video_path).
+
+    用 LIKE prefix 匹配, path 不带尾分隔时自动补一个, 防止
+    'F:\\China' 误匹配 'F:\\ChinaDolls\\...' (虽然实际罕见).
+    """
+    if not path:
+        return 0
+    sep = "\\" if "\\" in path else "/"
+    prefix = path if path.endswith(sep) else path + sep
+    # SQLite 默认 LIKE 不把 \ 当转义字符, prefix + '%' 直接用就行
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT video_path) AS n FROM frames WHERE video_path LIKE ?",
+        (prefix + "%",),
+    ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 def folder_summary(conn: sqlite3.Connection, run_id: int) -> list[dict]:
     """每个父目录: 视频数 + 出现的 person 数 + 总 face 数."""
     folders: dict[str, dict] = {}

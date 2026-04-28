@@ -3,7 +3,10 @@
   <span class="meta">{{ folders|length }} 个目录 · run #{{ run_id }}</span>
 {% endblock %}
 {% block main %}
-<h1>媒体目录</h1>
+<h1>
+  媒体目录
+  <span class="meta">已扫描的 (有 face 数据). 想新加 → <a href="/browse">浏览本机磁盘</a></span>
+</h1>
 <p class="hint">按目录分组. 点目录看其中视频和涉及的 person.</p>
 
 <table class="folder-tbl">
