@@ -10,12 +10,84 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+
+# ─── ffmpeg / ffprobe 绝对路径解析 ───────────────────────────────────────
+# 不能依赖 PATH —— NSSM 服务跑在 LocalSystem 下, 看不到安装 face-cast 的用户的
+# PATH (winget shim 在 ~\AppData\Local\Microsoft\WinGet\Links\ 之类的位置).
+# 启动时 (或第一次调用时) 把 ffprobe.exe / ffmpeg.exe 的绝对路径找出来缓存,
+# 后续 subprocess.run 直接用绝对路径, 不走 PATH 解析.
+
+def _resolve_bin(name: str) -> str:
+    """找到 ``ffprobe`` / ``ffmpeg`` 二进制的绝对路径.
+
+    优先级:
+      1. 环境变量 ``FACE_CAST_FFPROBE`` / ``FACE_CAST_FFMPEG`` 显式指定
+      2. ``shutil.which`` 走当前进程 PATH (普通 user 跑 CLI 时这就够了)
+      3. Windows 常见位置: winget Links / Program Files / Program Files\\ffmpeg
+      4. 实在没找到就回退到 bare name (subprocess 时 OSError, 但我们记错日志)
+    """
+    env_key = f"FACE_CAST_{name.upper()}"
+    forced = os.environ.get(env_key)
+    if forced and Path(forced).exists():
+        return forced
+
+    via_path = shutil.which(name)
+    if via_path:
+        return via_path
+
+    if os.name == "nt":
+        bin_name = f"{name}.exe"
+        candidates = [
+            # winget shim — 默认装 ffmpeg 时会落到这, 注意是用户独享, LocalSystem
+            # 看不到自己的, 只能赌别的用户的:
+            *[
+                Path(prof) / "AppData" / "Local" / "Microsoft" / "WinGet" / "Links" / bin_name
+                for prof in (Path("C:/Users").glob("*") if Path("C:/Users").exists() else [])
+                if prof.is_dir() and prof.name not in {"Public", "Default", "All Users"}
+            ],
+            # 标准全局安装位置
+            Path(r"C:\Program Files\ffmpeg\bin") / bin_name,
+            Path(r"C:\Program Files (x86)\ffmpeg\bin") / bin_name,
+            Path(r"C:\ffmpeg\bin") / bin_name,
+            # chocolatey
+            Path(r"C:\ProgramData\chocolatey\bin") / bin_name,
+        ]
+        for cand in candidates:
+            if cand.is_file():
+                return str(cand)
+
+    # 最后兜底, 让 subprocess.run 自己抛 OSError, 我们 print 出来
+    return name
+
+
+_FFPROBE_BIN: str | None = None
+_FFMPEG_BIN: str | None = None
+
+
+def _get_ffprobe() -> str:
+    global _FFPROBE_BIN
+    if _FFPROBE_BIN is None:
+        _FFPROBE_BIN = _resolve_bin("ffprobe")
+        print(f"[face-cast] ffprobe = {_FFPROBE_BIN}", file=sys.stderr, flush=True)
+    return _FFPROBE_BIN
+
+
+def _get_ffmpeg() -> str:
+    global _FFMPEG_BIN
+    if _FFMPEG_BIN is None:
+        _FFMPEG_BIN = _resolve_bin("ffmpeg")
+        print(f"[face-cast] ffmpeg  = {_FFMPEG_BIN}", file=sys.stderr, flush=True)
+    return _FFMPEG_BIN
 
 
 @dataclass
@@ -31,7 +103,7 @@ def ffprobe(path: Path) -> VideoMeta | None:
     try:
         r = subprocess.run(
             [
-                "ffprobe", "-v", "error",
+                _get_ffprobe(), "-v", "error",
                 "-select_streams", "v:0",
                 "-show_entries", "stream=codec_name,width,height:format=duration",
                 "-of", "json", str(path),
@@ -39,11 +111,15 @@ def ffprobe(path: Path) -> VideoMeta | None:
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         if r.returncode != 0:
+            print(f"[ffprobe] rc={r.returncode} stderr={r.stderr[:300]!r} path={path}",
+                  file=sys.stderr, flush=True)
             return None
         d = json.loads(r.stdout)
         s = (d.get("streams") or [{}])[0]
         f = d.get("format") or {}
         if not s or "duration" not in f:
+            print(f"[ffprobe] empty fields stdout={r.stdout[:200]!r} path={path}",
+                  file=sys.stderr, flush=True)
             return None
         return VideoMeta(
             duration_s=float(f["duration"]),
@@ -51,7 +127,9 @@ def ffprobe(path: Path) -> VideoMeta | None:
             height=int(s.get("height") or 0),
             codec=s.get("codec_name") or "",
         )
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, ValueError, OSError):
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, ValueError, OSError) as e:
+        print(f"[ffprobe] exception={type(e).__name__}: {e!r} path={path}",
+              file=sys.stderr, flush=True)
         return None
 
 
@@ -86,7 +164,7 @@ def extract_frame(path: Path, ms: int, max_height: int = 720) -> bytes | None:
     try:
         r = subprocess.run(
             [
-                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                _get_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
                 "-ss", f"{seek_s:.3f}",
                 "-i", str(path),
                 "-frames:v", "1",
