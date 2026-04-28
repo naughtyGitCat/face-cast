@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# uv
+.python-version
+
+# data + cache
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+cache/
+crops/
+frames/
+
+# secrets / config
+.env
+.env.local
+config.local.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+._*
+
+# Models (auto-downloaded by InsightFace)
+~/.insightface/
+models/buffalo_*/
+*.onnx
+*.params
+*.bin
+
+# Logs
+*.log
+logs/
