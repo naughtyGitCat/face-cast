@@ -17,6 +17,9 @@ dependencies = [
     "hdbscan>=0.8.38",
     "scikit-learn>=1.5",
     "lxml>=5.2",
+    "bottle>=0.13",     # Web UI
+    "jinja2>=3.1",      # UI 模板
+    "waitress>=3.0",    # 生产 WSGI
 ]
 
 [project.optional-dependencies]
@@ -39,6 +42,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/face_cast"]
+
+# 包含 web UI 的 templates/static
+[tool.hatch.build.targets.wheel.force-include]
+"src/face_cast/client/web/templates" = "face_cast/client/web/templates"
+"src/face_cast/client/web/static" = "face_cast/client/web/static"
 
 [tool.uv]
 package = true

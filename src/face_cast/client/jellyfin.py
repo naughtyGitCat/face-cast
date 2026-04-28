@@ -132,6 +132,6 @@ def push_named_persons(
             console.print(f"[green]✓[/green] {p['display_name']}: {len(crop_jpg)} B")
         else:
             stats["failed"] += 1
-            console.print(f"[red]✗[/red] {p['display_name']}: upload 失败")
+            console.print(f"[red]FAIL[/red] {p['display_name']}: upload 失败")
 
     return stats

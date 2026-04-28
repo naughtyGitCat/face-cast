@@ -309,6 +309,127 @@ def merge_persons(
     }
 
 
+def top_similar_persons(
+    conn: sqlite3.Connection, run_id: int, person_idx: int, k: int = 8,
+    min_similarity: float = 0.0,
+) -> list[dict]:
+    """按 centroid 余弦相似度返回 k 个最像的 person (排除自身).
+
+    返回字段: person_idx, display_name, size, similarity
+    """
+    me = conn.execute(
+        "SELECT id, centroid_blob FROM persons WHERE run_id = ? AND person_idx = ?",
+        (run_id, person_idx),
+    ).fetchone()
+    if not me or not me["centroid_blob"]:
+        return []
+    me_arr = np.frombuffer(me["centroid_blob"], dtype=np.float32)
+    me_n = me_arr / max(np.linalg.norm(me_arr), 1e-9)
+
+    others = conn.execute(
+        """
+        SELECT id, person_idx, display_name, size, centroid_blob
+        FROM persons
+        WHERE run_id = ? AND id != ? AND centroid_blob IS NOT NULL AND person_idx >= 0
+        """,
+        (run_id, me["id"]),
+    ).fetchall()
+    if not others:
+        return []
+    sims = []
+    for r in others:
+        v = np.frombuffer(r["centroid_blob"], dtype=np.float32)
+        n = np.linalg.norm(v)
+        if n == 0:
+            continue
+        sim = float(np.dot(v / n, me_n))
+        if sim >= min_similarity:
+            sims.append({
+                "person_idx": r["person_idx"],
+                "display_name": r["display_name"],
+                "size": r["size"],
+                "similarity": sim,
+            })
+    sims.sort(key=lambda x: x["similarity"], reverse=True)
+    return sims[:k]
+
+
+def list_persons(
+    conn: sqlite3.Connection, run_id: int, include_noise: bool = False,
+) -> list[dict]:
+    """列出当前 run 的全部 person (按 size 倒序)."""
+    where = "WHERE run_id = ?"
+    if not include_noise:
+        where += " AND person_idx >= 0"
+    rows = conn.execute(
+        f"""
+        SELECT id, person_idx, size, display_name
+        FROM persons {where}
+        ORDER BY size DESC
+        """,
+        (run_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def person_video_summary(
+    conn: sqlite3.Connection, person_db_id_: int,
+) -> list[dict]:
+    """该 person 出现过哪些视频, 每个出现几次."""
+    rows = conn.execute(
+        """
+        SELECT f.video_path, COUNT(fs.face_id) AS appearances
+        FROM face_samples fs
+        JOIN faces fa ON fa.id = fs.face_id
+        JOIN frames f ON f.id = fa.frame_id
+        WHERE fs.person_id = ?
+        GROUP BY f.video_path
+        ORDER BY appearances DESC
+        """,
+        (person_db_id_,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def person_face_ids(
+    conn: sqlite3.Connection, person_db_id_: int, limit: int = 100,
+) -> list[dict]:
+    """该 person 的全部 face id (用于 UI grid 展示)."""
+    rows = conn.execute(
+        """
+        SELECT fs.face_id, fa.det_score, fa.age, fa.sex,
+               f.video_path, f.frame_ms
+        FROM face_samples fs
+        JOIN faces fa ON fa.id = fs.face_id
+        JOIN frames f ON f.id = fa.frame_id
+        WHERE fs.person_id = ?
+        ORDER BY fa.det_score DESC
+        LIMIT ?
+        """,
+        (person_db_id_, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def face_crop(conn: sqlite3.Connection, face_id: int) -> bytes | None:
+    row = conn.execute("SELECT crop_jpeg FROM faces WHERE id = ?", (face_id,)).fetchone()
+    return row["crop_jpeg"] if row else None
+
+
+def eject_face(conn: sqlite3.Connection, face_id: int, person_db_id_: int) -> int:
+    """把单张脸踢出当前 person (变噪声). 返回受影响的 face_samples 行数."""
+    cur = conn.execute(
+        "DELETE FROM face_samples WHERE face_id = ? AND person_id = ?",
+        (face_id, person_db_id_),
+    )
+    # 重算 person size
+    new_size = conn.execute(
+        "SELECT COUNT(*) AS n FROM face_samples WHERE person_id = ?", (person_db_id_,),
+    ).fetchone()["n"]
+    conn.execute("UPDATE persons SET size = ? WHERE id = ?", (new_size, person_db_id_))
+    return cur.rowcount
+
+
 def representative_face(
     conn: sqlite3.Connection, person_db_id_: int
 ) -> tuple[bytes, int] | None:

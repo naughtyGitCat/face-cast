@@ -1,0 +1,29 @@
+{% extends "_base.html" %}
+{% block topbar %}
+  <span class="meta">
+    run #{{ run.id }} · model {{ run.model_name }} ·
+    {{ stats.persons_total }} persons ({{ stats.persons_named }} named) ·
+    {{ stats.faces }} faces ·
+    {{ stats.videos }} videos
+  </span>
+{% endblock %}
+{% block main %}
+<h1>Persons (按出场次数排序)</h1>
+<p class="hint">点 person 卡进入详情。命名了的 person 加粗。</p>
+
+<div class="grid">
+{% for p in persons %}
+  <a class="card {% if p.display_name %}named{% endif %}" href="/person/{{ p.person_idx }}">
+    {% if p.thumb_face_id %}
+      <img loading="lazy" src="/face/{{ p.thumb_face_id }}.jpg" alt="">
+    {% else %}
+      <div class="no-thumb">no crop</div>
+    {% endif %}
+    <div class="caption">
+      <div class="name">{{ p.display_name or "person_" ~ p.person_idx }}</div>
+      <div class="size">{{ p.size }} 帧</div>
+    </div>
+  </a>
+{% endfor %}
+</div>
+{% endblock %}

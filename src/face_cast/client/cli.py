@@ -401,6 +401,17 @@ def cmd_push_jellyfin(
     )
 
 
+@app.command(name="ui")
+def cmd_ui(
+    db_path: DBOpt = Path("./face_cast.db"),
+    host: Annotated[str, typer.Option("--host", help="bind 地址")] = "0.0.0.0",
+    port: Annotated[int, typer.Option("--port", help="端口")] = 9100,
+):
+    """启动 web UI (浏览器里整理 cluster: 命名/合并/拆分/推 Jellyfin)."""
+    from .web.app import serve  # noqa: PLC0415
+    serve(db_path.resolve(), host=host, port=port)
+
+
 @app.command(name="stats")
 def cmd_stats(db_path: DBOpt = Path("./face_cast.db")):
     """整体统计: 视频/帧/脸/embedding/person 数."""

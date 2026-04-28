@@ -1,0 +1,85 @@
+{% extends "_base.html" %}
+{% block topbar %}
+  <a href="/" class="meta">← 返回</a>
+{% endblock %}
+{% block main %}
+<h1>
+  {{ person.display_name or "person_" ~ person.person_idx }}
+  <span class="meta">person_{{ person.person_idx }} · {{ person.size }} 帧 · run #{{ run_id }}</span>
+</h1>
+
+<section class="actions">
+  <form hx-post="/person/{{ person.person_idx }}/name" hx-trigger="submit" class="inline">
+    <input type="text" name="display_name" value="{{ person.display_name or '' }}"
+           placeholder="给这个 person 起名 (留空=取消命名)">
+    <button>保存</button>
+  </form>
+
+  <form hx-post="/person/{{ person.person_idx }}/split" hx-confirm="把这个 person 重新拆开?" class="inline">
+    <button>拆分 (split)</button>
+  </form>
+
+  <form hx-post="/person/{{ person.person_idx }}/push-jellyfin" class="inline jf">
+    <input type="text" name="jf_url" placeholder="Jellyfin URL"
+           value="http://10.100.100.13:8096">
+    <input type="password" name="jf_api_key" placeholder="API key">
+    <button>推 Jellyfin 头像</button>
+  </form>
+</section>
+
+<section>
+  <h2>样本脸 ({{ faces|length }} 张, 按 det_score 排序)</h2>
+  <div class="grid faces">
+  {% for f in faces %}
+    <div class="face-card">
+      <img loading="lazy" src="/face/{{ f.face_id }}.jpg" alt="">
+      <div class="caption tiny">
+        score {{ "%.2f"|format(f.det_score or 0) }}
+        {% if f.age %}· {{ f.age }}岁{% endif %}
+        {% if f.sex == 0 %}· F{% elif f.sex == 1 %}· M{% endif %}
+      </div>
+      <form hx-post="/face/{{ f.face_id }}/eject" hx-confirm="把这张脸踢出 person?">
+        <button class="link">踢出</button>
+      </form>
+    </div>
+  {% endfor %}
+  </div>
+</section>
+
+<section>
+  <h2>出现在 {{ videos|length }} 个视频</h2>
+  <ul class="video-list">
+  {% for v in videos %}
+    <li><span class="count">{{ v.appearances }}</span> {{ v.video_path }}</li>
+  {% endfor %}
+  </ul>
+</section>
+
+<section>
+  <h2>相似 person (centroid 余弦距离, 推荐合并到本人)</h2>
+  {% if similar %}
+  <div class="grid similar">
+    {% for s in similar %}
+    <div class="card sim">
+      {% if s.thumb_face_id %}
+        <img loading="lazy" src="/face/{{ s.thumb_face_id }}.jpg" alt="">
+      {% endif %}
+      <div class="caption">
+        <div class="name">
+          <a href="/person/{{ s.person_idx }}">{{ s.display_name or "person_" ~ s.person_idx }}</a>
+        </div>
+        <div class="size">{{ s.size }} 帧 · sim={{ "%.2f"|format(s.similarity) }}</div>
+      </div>
+      <form hx-post="/person/{{ person.person_idx }}/merge"
+            hx-confirm="把 person {{ s.person_idx }} ({{ s.size }} 帧) 合并到这个人?">
+        <input type="hidden" name="source_idx" value="{{ s.person_idx }}">
+        <button class="merge-btn">← 合并到此</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="hint">没有相似度 ≥ 0.2 的其他 person.</p>
+  {% endif %}
+</section>
+{% endblock %}
