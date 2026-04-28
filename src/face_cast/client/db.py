@@ -221,6 +221,137 @@ def link_face_sample(
     )
 
 
+def person_db_id(conn: sqlite3.Connection, run_id: int, person_idx: int) -> int | None:
+    """把 user 友好的 person_idx 翻译成 DB 主键."""
+    row = conn.execute(
+        "SELECT id FROM persons WHERE run_id = ? AND person_idx = ?",
+        (run_id, person_idx),
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def merge_persons(
+    conn: sqlite3.Connection,
+    run_id: int,
+    target_idx: int,
+    source_indices: list[int],
+    *,
+    delete_sources: bool = True,
+) -> dict:
+    """把 source person 的所有 face_sample reassign 到 target person.
+
+    - face_samples 移转 (is_manual=1, 标记为人工合并)
+    - 删 source persons 行 (默认), 或者保留但 size=0
+    - 重算 target persons 的 size 与 centroid (从 embeddings 平均)
+    """
+    target_id = person_db_id(conn, run_id, target_idx)
+    if target_id is None:
+        raise ValueError(f"target person_idx={target_idx} 不在 run #{run_id}")
+
+    moved = 0
+    deleted_persons = 0
+    for src_idx in source_indices:
+        src_id = person_db_id(conn, run_id, src_idx)
+        if src_id is None or src_id == target_id:
+            continue
+        # 把 source 的 face_samples 转过去 (避免 PK 冲突: 先删已存在的目标关联)
+        cur = conn.execute(
+            """
+            UPDATE OR IGNORE face_samples
+            SET person_id = ?, is_manual = 1
+            WHERE person_id = ?
+            """,
+            (target_id, src_id),
+        )
+        moved += cur.rowcount
+        # 残留的 (face_id 已在 target) 删掉
+        conn.execute("DELETE FROM face_samples WHERE person_id = ?", (src_id,))
+
+        if delete_sources:
+            conn.execute("DELETE FROM persons WHERE id = ?", (src_id,))
+            deleted_persons += 1
+        else:
+            conn.execute("UPDATE persons SET size = 0 WHERE id = ?", (src_id,))
+
+    # 重算 target size
+    new_size = conn.execute(
+        "SELECT COUNT(*) AS n FROM face_samples WHERE person_id = ?",
+        (target_id,),
+    ).fetchone()["n"]
+    # 重算 target centroid (用 active run 的 model 对应的 embedding)
+    rows = conn.execute(
+        """
+        SELECT e.vector, e.dim FROM face_samples fs
+        JOIN embeddings e ON e.face_id = fs.face_id
+        JOIN persons p ON p.id = fs.person_id
+        WHERE fs.person_id = ?
+          AND e.model_name = (SELECT model_name FROM detection_runs WHERE id = p.run_id)
+          AND e.model_version = (SELECT model_version FROM detection_runs WHERE id = p.run_id)
+        """,
+        (target_id,),
+    ).fetchall()
+    centroid_blob = None
+    if rows:
+        dim = rows[0]["dim"]
+        matrix = np.frombuffer(b"".join(r["vector"] for r in rows), dtype=np.float32).reshape(-1, dim)
+        centroid_blob = matrix.mean(axis=0).astype(np.float32).tobytes()
+
+    conn.execute(
+        "UPDATE persons SET size = ?, centroid_blob = ? WHERE id = ?",
+        (new_size, centroid_blob, target_id),
+    )
+
+    return {
+        "target_idx": target_idx,
+        "moved_face_samples": moved,
+        "deleted_source_persons": deleted_persons,
+        "new_target_size": new_size,
+    }
+
+
+def representative_face(
+    conn: sqlite3.Connection, person_db_id_: int
+) -> tuple[bytes, int] | None:
+    """该 person 的最佳代表 face: 返回 (crop_jpeg, face_id). 没 crop 返回 None."""
+    rows = conn.execute(
+        """
+        SELECT f.id AS face_id, f.det_score, f.crop_jpeg, e.vector, e.dim,
+               p.centroid_blob
+        FROM face_samples fs
+        JOIN faces f ON f.id = fs.face_id
+        JOIN embeddings e ON e.face_id = f.id
+        JOIN persons p ON p.id = fs.person_id
+        WHERE fs.person_id = ?
+          AND f.crop_jpeg IS NOT NULL
+          AND e.model_name = (SELECT model_name FROM detection_runs WHERE id = p.run_id)
+        """,
+        (person_db_id_,),
+    ).fetchall()
+    if not rows:
+        return None
+    centroid = rows[0]["centroid_blob"]
+    if centroid is None:
+        # 没 centroid, 直接挑 det_score 最高的
+        best = max(rows, key=lambda r: r["det_score"] or 0)
+        return (best["crop_jpeg"], best["face_id"])
+    centroid_arr = np.frombuffer(centroid, dtype=np.float32)
+    n = np.linalg.norm(centroid_arr)
+    if n == 0:
+        return (rows[0]["crop_jpeg"], rows[0]["face_id"])
+    centroid_n = centroid_arr / n
+    best_score, best_jpg, best_fid = -1.0, None, None
+    for r in rows:
+        emb = np.frombuffer(r["vector"], dtype=np.float32)
+        en = np.linalg.norm(emb)
+        if en == 0:
+            continue
+        sim = float(np.dot(emb / en, centroid_n))
+        score = (r["det_score"] or 0.0) * sim
+        if score > best_score:
+            best_score, best_jpg, best_fid = score, r["crop_jpeg"], r["face_id"]
+    return (best_jpg, best_fid) if best_jpg is not None else None
+
+
 def active_run(conn: sqlite3.Connection) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT * FROM detection_runs WHERE is_active = 1 ORDER BY id DESC LIMIT 1"

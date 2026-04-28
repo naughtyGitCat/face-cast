@@ -66,3 +66,20 @@ def detect_persons(
         n_noise=n_noise,
         centroids=centroids,
     )
+
+
+def split_subcluster(
+    embeddings: np.ndarray,
+    min_cluster_size: int = 2,
+    min_samples: int = 2,
+) -> DetectionResult:
+    """对一个 person 的 embedding 子集再聚类, 找出"其实是多人"的情况.
+
+    跟 detect_persons 一致, 但参数更宽松 (默认 min_cluster=2).
+    """
+    return detect_persons(
+        embeddings,
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        metric="cosine",
+    )

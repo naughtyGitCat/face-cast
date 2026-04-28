@@ -46,7 +46,7 @@ class Config:
     media_root: Path
     db_path: Path
     server_url: str
-    frames_per_video: int = 5
+    frames_per_video: int = 15              # 经验: 5 太少 (face 命中率约 12%, 跨视频聚类不出来)
     edge_margin: float = 0.1                # 跳过首尾各 10%
     max_frame_height: int = 720             # 抽帧时 ffmpeg 端下采样
     cache_face_crops: bool = True           # 写 faces.crop_jpeg
