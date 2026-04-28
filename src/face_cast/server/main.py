@@ -186,15 +186,25 @@ def detect_batch():
 
 
 def _load_model() -> None:
-    """同步载入 (启动时调一次, 主线程阻塞至 GPU 暖好)."""
+    """同步载入 (启动时调一次, 主线程阻塞至 GPU 暖好).
+
+    模型根目录优先级:
+      1. ``FACE_MODEL_ROOT`` 环境变量 (服务化场景, 让 LocalSystem 找到模型)
+      2. ``~/.insightface`` (默认, 单用户)
+    """
     from insightface.app import FaceAnalysis  # noqa: PLC0415
 
-    print(f"[face-cast] loading {MODEL_NAME} ...", flush=True)
+    model_root = os.environ.get("FACE_MODEL_ROOT")
+    where = model_root or "~/.insightface"
+    print(f"[face-cast] loading {MODEL_NAME} (root={where}) ...", flush=True)
     t0 = time.time()
-    fa = FaceAnalysis(
-        name=MODEL_NAME,
-        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-    )
+    kwargs: dict = {
+        "name": MODEL_NAME,
+        "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    }
+    if model_root:
+        kwargs["root"] = model_root
+    fa = FaceAnalysis(**kwargs)
     fa.prepare(ctx_id=0, det_size=DET_SIZE)
     _state["fa"] = fa
     _state["providers"] = fa.models["detection"].session.get_providers()
