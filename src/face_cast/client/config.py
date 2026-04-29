@@ -42,6 +42,11 @@ class ServerConfig:
     mac: str = ""
     broadcast: str = "255.255.255.255"
     wake_timeout_s: int = 90
+    # WoL 备用通道: SSH 到一台同 LAN 的可靠节点 (路由器最佳) 让它代发
+    # etherwake. 用于解决本机 Hyper-V/VPN/Docker 拦截 broadcast 的问题.
+    wol_gateway: str = ""                       # e.g. "root@10.100.100.2"
+    wol_gateway_cmd: str = "etherwake -i br-lan -b {mac}"
+    wol_gateway_ssh_key: str = ""               # 私钥绝对路径
 
     @property
     def configured(self) -> bool:
@@ -49,7 +54,7 @@ class ServerConfig:
 
     @property
     def wol_enabled(self) -> bool:
-        return bool(self.mac)
+        return bool(self.mac) or bool(self.wol_gateway)
 
 
 @dataclass
@@ -100,6 +105,9 @@ class Config:
                 mac=str(sv.get("mac", "") or ""),
                 broadcast=str(sv.get("broadcast", "255.255.255.255") or "255.255.255.255"),
                 wake_timeout_s=int(sv.get("wake_timeout_s", 90) or 90),
+                wol_gateway=str(sv.get("wol_gateway", "") or ""),
+                wol_gateway_cmd=str(sv.get("wol_gateway_cmd", "etherwake -i br-lan -b {mac}") or "etherwake -i br-lan -b {mac}"),
+                wol_gateway_ssh_key=str(sv.get("wol_gateway_ssh_key", "") or ""),
             ),
             scan=ScanConfig(
                 frames=int(sc.get("frames", 15) or 15),

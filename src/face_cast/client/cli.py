@@ -55,11 +55,15 @@ def _wake_server(server_url: str, db_path: Path) -> None:
         mac=cfg.server.mac or None,
         broadcast=cfg.server.broadcast,
         wake_timeout_s=cfg.server.wake_timeout_s,
+        gateway=cfg.server.wol_gateway or None,
+        gateway_cmd=cfg.server.wol_gateway_cmd,
+        gateway_ssh_key=cfg.server.wol_gateway_ssh_key or None,
     )
-    if not ok and cfg.server.mac:
+    if not ok and cfg.server.wol_enabled:
         console.print(
             f"[red]WoL 唤醒 {server_url} 失败 (timeout {cfg.server.wake_timeout_s}s). "
-            f"检查 BIOS WoL / NIC magic packet / 子网广播地址 ({cfg.server.broadcast}).[/red]"
+            f"检查 BIOS WoL / NIC magic packet / 子网广播地址 ({cfg.server.broadcast}) / "
+            f"SSH gateway ({cfg.server.wol_gateway}).[/red]"
         )
 
 
