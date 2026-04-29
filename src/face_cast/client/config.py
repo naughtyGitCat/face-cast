@@ -36,12 +36,20 @@ class JellyfinConfig:
 
 @dataclass
 class ServerConfig:
-    """face-cast inference server (跑在 GPU 机, 默认 .11:8001)."""
+    """face-cast inference server (跑在 GPU 机, 默认 .11:9000)."""
     url: str = ""
+    # WoL 唤醒 (远端配 idle suspend 时用); 没配 mac 就跳过 WoL
+    mac: str = ""
+    broadcast: str = "255.255.255.255"
+    wake_timeout_s: int = 90
 
     @property
     def configured(self) -> bool:
         return bool(self.url)
+
+    @property
+    def wol_enabled(self) -> bool:
+        return bool(self.mac)
 
 
 @dataclass
@@ -89,6 +97,9 @@ class Config:
             ),
             server=ServerConfig(
                 url=str(sv.get("url", "") or ""),
+                mac=str(sv.get("mac", "") or ""),
+                broadcast=str(sv.get("broadcast", "255.255.255.255") or "255.255.255.255"),
+                wake_timeout_s=int(sv.get("wake_timeout_s", 90) or 90),
             ),
             scan=ScanConfig(
                 frames=int(sc.get("frames", 15) or 15),

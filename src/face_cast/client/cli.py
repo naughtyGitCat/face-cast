@@ -12,6 +12,7 @@ from rich.table import Table
 from . import db, jellyfin, portrait
 from .api import FaceClient
 from .cluster import split_subcluster
+from .config import Config as ClientConfig
 from .phase2 import (
     Config,
     extract_and_embed,
@@ -20,6 +21,7 @@ from .phase2 import (
     scan_videos,
     write_nfos,
 )
+from .wakeup import ensure_alive
 
 app = typer.Typer(
     help="face-cast 客户端 — 抽帧 + 调用 server + 识别 person + 写 NFO",
@@ -37,6 +39,28 @@ ServerOpt = Annotated[
 DBOpt = Annotated[
     Path, typer.Option("--db", help="SQLite 工作 DB 路径", envvar="FACE_DB_PATH")
 ]
+
+
+# ─── server 唤醒 (WoL) ───────────────────────────────────────────────────
+
+def _wake_server(server_url: str, db_path: Path) -> None:
+    """打 server 之前先确保它活着. 配了 [server].mac 就 WoL 唤醒.
+
+    config.toml 从 ``<db_path>.parent`` 自动找 (跟 face-cast ui 同一套规则).
+    没配 mac → 只做一次探活, 通了就走, 不通就让后续请求自己抛错.
+    """
+    cfg = ClientConfig.load(db_path=db_path)
+    ok = ensure_alive(
+        server_url,
+        mac=cfg.server.mac or None,
+        broadcast=cfg.server.broadcast,
+        wake_timeout_s=cfg.server.wake_timeout_s,
+    )
+    if not ok and cfg.server.mac:
+        console.print(
+            f"[red]WoL 唤醒 {server_url} 失败 (timeout {cfg.server.wake_timeout_s}s). "
+            f"检查 BIOS WoL / NIC magic packet / 子网广播地址 ({cfg.server.broadcast}).[/red]"
+        )
 
 
 # ─── 子命令 ──────────────────────────────────────────────────────────────
@@ -91,6 +115,7 @@ def extract(
         frames_per_video=frames,
         cache_face_crops=not no_crop_cache,
     )
+    _wake_server(server, db_path.resolve())
     conn = db.connect(cfg.db_path)
     client = FaceClient(cfg.server_url)
     info = client.model_info()
@@ -114,6 +139,7 @@ def detect(
         hdbscan_min_cluster=min_cluster_size,
         hdbscan_min_samples=min_samples,
     )
+    _wake_server(server, db_path.resolve())
     conn = db.connect(cfg.db_path)
     client = FaceClient(cfg.server_url)
     info = client.model_info()

@@ -66,6 +66,96 @@ app = Bottle()
 _state: dict = {}
 
 
+# ─── idle suspend (省电用) ───────────────────────────────────────────────
+# 配置走 env var, 不写 config 文件因为 server 端尽量保持无状态.
+#   FACE_IDLE_SUSPEND_SECS   超过这么久没请求就 suspend (默认 0 = 关闭)
+#   FACE_IDLE_SUSPEND_MODE   "hibernate" (S4) 或 "sleep" (S3); 默认
+#                            hibernate (零功耗, ~30s 唤醒); 注意 S4 需要先
+#                            ``powercfg /hibernate on`` 启用
+#
+# 实现:
+#   - bottle ``before_request`` hook 在每个请求处理前 bump _last_request
+#   - daemon thread 每 30s 检查 idle, 超时调 SetSuspendState
+#   - SetSuspendState 阻塞到系统真的睡下去并被唤醒, 返回时把 _last_request
+#     重置避免立刻又睡
+
+import threading  # noqa: E402
+
+_last_request_lock = threading.Lock()
+_last_request_at = time.time()
+
+
+def _bump_activity() -> None:
+    global _last_request_at
+    with _last_request_lock:
+        _last_request_at = time.time()
+
+
+@app.hook("before_request")
+def _hook_bump():  # noqa: ANN202
+    _bump_activity()
+
+
+def _suspend(mode: str) -> bool:
+    """调 SetSuspendState 进 sleep (S3) 或 hibernate (S4). 阻塞到唤醒.
+
+    LocalSystem 默认有 SeShutdownPrivilege, 不用手动 AdjustTokenPrivileges.
+    """
+    if sys.platform != "win32":
+        print("[idle-suspend] non-Windows, 跳过", file=sys.stderr, flush=True)
+        return False
+    import ctypes  # noqa: PLC0415
+    hibernate = 1 if mode == "hibernate" else 0
+    force = 1
+    disable_wake_event = 0
+    try:
+        ok = ctypes.windll.powrprof.SetSuspendState(
+            hibernate, force, disable_wake_event)
+        return bool(ok)
+    except OSError as e:
+        print(f"[idle-suspend] SetSuspendState err: {e}", file=sys.stderr, flush=True)
+        return False
+
+
+def _idle_watcher(timeout_s: int, mode: str) -> None:
+    print(f"[idle-suspend] watcher 启动: 阈值 {timeout_s}s, 模式 {mode}",
+          flush=True)
+    poll_interval = max(15, min(60, timeout_s // 4))
+    while True:
+        time.sleep(poll_interval)
+        with _last_request_lock:
+            idle = time.time() - _last_request_at
+        if idle < timeout_s:
+            continue
+        print(f"[idle-suspend] {idle:.0f}s 无请求 → {mode}", flush=True)
+        _suspend(mode)
+        # SetSuspendState 阻塞返回时系统已经唤醒. 重置计时, 否则下一轮
+        # 立刻又触发.
+        _bump_activity()
+        print("[idle-suspend] 系统已唤醒, 计时重置", flush=True)
+
+
+def _start_idle_watcher_if_configured() -> None:
+    raw = os.environ.get("FACE_IDLE_SUSPEND_SECS", "").strip()
+    if not raw:
+        return
+    try:
+        timeout = int(raw)
+    except ValueError:
+        print(f"[idle-suspend] FACE_IDLE_SUSPEND_SECS={raw!r} 不是整数, 跳过",
+              file=sys.stderr, flush=True)
+        return
+    if timeout <= 0:
+        return
+    mode = os.environ.get("FACE_IDLE_SUSPEND_MODE", "hibernate").lower()
+    if mode not in {"hibernate", "sleep"}:
+        print(f"[idle-suspend] FACE_IDLE_SUSPEND_MODE={mode!r} 非法, 用 hibernate",
+              file=sys.stderr, flush=True)
+        mode = "hibernate"
+    t = threading.Thread(target=_idle_watcher, args=(timeout, mode), daemon=True)
+    t.start()
+
+
 # ─── helpers ─────────────────────────────────────────────────────────────
 
 
@@ -237,6 +327,7 @@ def cli() -> None:
     args = p.parse_args()
 
     _load_model()  # 启动前先把模型暖好, 第一次请求不卡
+    _start_idle_watcher_if_configured()
 
     if args.server == "waitress":
         try:

@@ -12,6 +12,12 @@ api_key = ""  # Jellyfin Dashboard → 高级 → API 密钥
 # face-cast inference server (GPU 机). 不配的话 /browse 上的扫描按钮会拒绝.
 # 默认端口 :9000 (face-cast extract 的 typer 默认).
 url = "http://10.100.100.11:9000"
+# Wake-on-LAN: 服务端 idle 自动 hibernate 时, 客户端打请求前会先发 magic
+# packet 唤醒. 没配 mac 就跳过 WoL.
+# mac 用 ``getmac /v`` 或 ``ipconfig /all`` 在 .11 上查物理网卡的 MAC.
+mac = ""                         # e.g. "58:11:22:BE:6F:4F"
+broadcast = "10.100.100.255"     # 子网定向广播 (路由器一般不转 limited bcast)
+wake_timeout_s = 90              # 等 .11 起来的最长时间, S4 唤醒一般 30-60s
 
 [scan]
 frames = 15  # 每个视频抽多少帧
